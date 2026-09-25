@@ -171,13 +171,22 @@ undo restores geometry, not group membership.
 
 These are spatial associations, separate from Hyprland's tabbed groups. Pinned,
 natively grouped and fullscreen windows cannot be added. Fullscreen temporarily
-suspends group framing. Closed windows are removed automatically. Groups last
-for the plugin session (including closing/reopening the canvas), but are not
-saved across plugin reloads or login sessions. Window positions keep their
-existing persistence behavior.
+suspends group framing. Closed windows are removed automatically.
+
+With `canvas.remember_layout = true`, groups, window positions and sizes, camera,
+zoom and navigation mode are saved together in
+`$XDG_STATE_HOME/spatial-overview/canvas-memory.tsv` (default
+`~/.local/state/spatial-overview/canvas-memory.tsv`). Updates flush this state
+before unloading and restore it without repacking groups. Stable window IDs
+preserve identity across plugin reloads, including windows with identical titles.
+After a new login, group membership is restored only for unambiguous app/title
+matches; ambiguous or changed titles are not guessed. The existing app placement
+fallback still applies to individual windows. Disabling `remember_layout` keeps
+state in memory only. Version 1 layout files are read and upgraded on saving.
 
 Script actions: `canvas("select")`, `canvas("clear-selection")`,
-`canvas("group")`, `canvas("ungroup")`, `canvas("frame-group")`.
+`canvas("group")`, `canvas("ungroup")`, `canvas("frame-group")`,
+`canvas("save-memory")` (flush pending layout changes immediately).
 `hyprctl spatialoverview` includes `selection` and `groups` arrays of window titles.
 
 ## Tuning

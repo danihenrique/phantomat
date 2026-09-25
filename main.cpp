@@ -462,6 +462,7 @@ bool canvasPointerMoved();
 std::string canvasStateJson();
 static SP<SHyprCtlCommand> g_stateCommand;
 void canvasFullscreenReset();
+bool flushCanvasMemory();
 bool canvasToggleFill(PHLWINDOW window);
 bool canvasTogglePin(PHLWINDOW window);
 
@@ -596,6 +597,8 @@ void requestFlightDeckNative(PHLWINDOW window, Fullscreen::eFullscreenMode mode)
 }
 
 static SDispatchResult onCanvasDispatcher(std::string arg) {
+    if (arg == "save-memory")
+        return flushCanvasMemory() ? SDispatchResult{} : SDispatchResult{.success = false, .error = "Could not save canvas memory"};
     if (arg.starts_with("experiment ")) {
         const auto PREVIOUS = SpatialOverview::Experiments::id();
         const auto NAME = arg.substr(11);
@@ -1012,6 +1015,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     if (g_stateCommand)
         HyprlandAPI::unregisterHyprCtlCommand(SCROLLOVERVIEW_HANDLE, g_stateCommand);
     g_stateCommand.reset();
+    flushCanvasMemory(); // before restoring native window geometry or clearing groups
     canvasFullscreenReset();
     clearScrollOverviews();
     disableScrollOverviewHooks();

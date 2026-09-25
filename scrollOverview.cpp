@@ -1568,12 +1568,12 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
     Animation::mgr()->createAnimation(1.F, workspaceInsertProgress, overviewAnimationConfig, AVARDAMAGE_NONE);
     Animation::mgr()->createAnimation(1.F, workspaceInsertFadeProgress, workspaceInsertFadeConfig, AVARDAMAGE_NONE);
 
+    const auto SAVEDCAMERA = isCanvasDesktop() && pMonitor && ScrollOverview::Config::getCanvasRememberLayout() && !g_canvasCameraBookmarks.contains(pMonitor->m_name)
+        ? SpatialOverview::Memory::camera(pMonitor->m_name) : std::nullopt;
     if (isCanvasDesktop() && pMonitor && g_canvasCameraBookmarks.contains(pMonitor->m_name))
         viewOffset->setValueAndWarp(g_canvasCameraBookmarks.at(pMonitor->m_name));
-    else if (isCanvasDesktop() && pMonitor && ScrollOverview::Config::getCanvasRememberLayout()) {
-        if (const auto CAMERA = SpatialOverview::Memory::camera(pMonitor->m_name))
-            viewOffset->setValueAndWarp(*CAMERA);
-    }
+    else if (SAVEDCAMERA)
+        viewOffset->setValueAndWarp(SAVEDCAMERA->offset);
 
     scale->setUpdateCallback([this](auto) { damage(); });
     transitionProgress->setUpdateCallback([this](auto) { damage(); });
@@ -1585,6 +1585,15 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
         *scale = isCanvasDesktop() ? (canvasNavigationActive ? ScrollOverview::Config::getCanvasInitialZoom() : 1.F) : ScrollOverview::Config::getScale();
         if (isCanvasDesktop())
             *transitionProgress = canvasNavigationActive ? 1.F : 0.F;
+    }
+
+    if (SAVEDCAMERA && !swipe) {
+        canvasNavigationActive = SAVEDCAMERA->navigating;
+        scale->setValueAndWarp(std::clamp(SAVEDCAMERA->zoom, ScrollOverview::Config::getCanvasMinZoom(), ScrollOverview::Config::getCanvasMaxZoom()));
+        navigationReturnOffset = SAVEDCAMERA->returnOffset;
+        navigationReturnZoom = SAVEDCAMERA->returnZoom;
+        hasNavigationReturn = true;
+        transitionProgress->setValueAndWarp(canvasNavigationActive ? 1.F : 0.F);
     }
 
     const auto initialFullscreenWindow =
@@ -2525,6 +2534,8 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
             loadSharedCanvasLayout();
     }
 
+    if (canvasNavigationActive && isCanvasDesktop())
+        beginNavigatorSession();
     rememberSelection(Desktop::focusState()->window());
     viewportCurrentWorkspace = activeWorkspaceIndex();
     syncSelectionToViewport();
@@ -4317,7 +4328,7 @@ std::string canvasStateJson() {
         groups += (groups.empty() ? "" : ", ") + titles(group);
     const auto* LEADER   = g_linkedLeader;
     const auto  SELECTED = SpatialOverview::Navigator::isOpen() ? SpatialOverview::Navigator::selectedWindow() : PHLWINDOW{};
-    return std::format("{{\"linked\": {}, \"leader\": {}, \"screens\": [{}], \"fullscreen\": [{}], \"filled\": [{}], \"selected\": {}, \"selection\": {}, \"groups\": [{}]}}\n",
+    return std::format("{{\"memory_version\": 2, \"linked\": {}, \"leader\": {}, \"screens\": [{}], \"fullscreen\": [{}], \"filled\": [{}], \"selected\": {}, \"selection\": {}, \"groups\": [{}]}}\n",
                        ScrollOverview::Config::getCanvasLinkedScreens() ? "true" : "false", jsonString(LEADER && LEADER->canvasMonitor() ? LEADER->canvasMonitor()->m_name : ""),
                        screens, fullscreen, canvasFillJson(), jsonString(SELECTED ? SELECTED->m_title : ""), titles(SpatialOverview::CanvasGroups::selection), groups);
 }
@@ -5837,6 +5848,8 @@ void CScrollOverview::endScrollingPan() {
     if (WORKSPACE)
         focusMostVisibleScrollingWindow(WORKSPACE);
     scrollingPanInitialWindow.reset();
+    if (isCanvasDesktop())
+        noteCanvasLayoutChanged();
 }
 
 void CScrollOverview::updateViewportWorkspaceFromCanvasCenter() {
@@ -9609,9 +9622,9 @@ void onCanvasExperimentChanged(std::string_view previous) {
     }
 }
 
-static int saveCanvasMemory(void*) {
+bool flushCanvasMemory() {
     if (scrollOverviews().empty() || !ScrollOverview::Config::getCanvasRememberLayout())
-        return 0;
+        return true;
 
     std::vector<SpatialOverview::Memory::SWindowPlacement> placements;
     std::unordered_set<const void*>                        visited;
@@ -9620,20 +9633,37 @@ static int saveCanvasMemory(void*) {
         if (!shouldShowOverviewWindow(WINDOW) || WINDOW->m_pinned || !WINDOW->layoutTarget() || !WINDOW->layoutTarget()->floating() ||
             !visited.emplace(WINDOW.get()).second)
             continue;
-        placements.push_back({.window = WINDOW, .box = WINDOW->layoutTarget()->position()});
+        auto box = WINDOW->layoutTarget()->position();
+        if (Fullscreen::controller()->isFullscreen(WINDOW)) {
+            if (const auto it = g_canvasWindowedBox.find(WINDOW.get()); it != g_canvasWindowedBox.end())
+                box = it->second.box;
+            else
+                continue;
+        }
+        placements.push_back({.window = WINDOW, .box = box});
     }
 
-    // Cameras are remembered where they rest at 100%, not mid-flight or zoomed out.
-    std::unordered_map<std::string, Vector2D> cameras;
+    // Keep both the current view and the return view, including group-fit zoom.
+    std::unordered_map<std::string, SpatialOverview::Memory::SCamera> cameras;
     for (const auto& overview : scrollOverviews()) {
         const auto* canvas  = canvasOf(overview);
         const auto  MONITOR = overview ? overview->pMonitor.lock() : PHLMONITOR{};
         if (!canvas || !MONITOR || !canvas->isCanvasDesktop() || canvas->isClosing())
             continue;
-        cameras[MONITOR->m_name] = canvas->isCanvasNavigationActive() && canvas->hasNavigationReturn ? canvas->navigationReturnOffset : canvas->restingCameraOffset();
+        cameras[MONITOR->m_name] = canvas->memoryCamera();
     }
-    SpatialOverview::Memory::save(placements, cameras);
+    return SpatialOverview::Memory::save(placements, cameras);
+}
+
+static int saveCanvasMemory(void*) {
+    flushCanvasMemory();
     return 0;
+}
+
+SpatialOverview::Memory::SCamera CScrollOverview::memoryCamera() const {
+    return {.offset = viewOffset->goal(), .zoom = scale->goal(), .navigating = canvasNavigationActive,
+            .returnOffset = hasNavigationReturn ? navigationReturnOffset : viewOffset->goal(),
+            .returnZoom = hasNavigationReturn ? navigationReturnZoom : scale->goal()};
 }
 
 void disarmCanvasTimers() {
@@ -11098,6 +11128,7 @@ bool CScrollOverview::flightDeckAction(const std::string& action) {
             }
         } else if (action == "ungroup") {
             Groups::dissolve(window);
+            noteCanvasLayoutChanged();
             SpatialOverview::Navigator::showNotice("Ungrouped; window positions kept");
         } else if (action == "frame-group")
             return frameCanvasGroup(window, false);

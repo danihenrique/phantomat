@@ -16,22 +16,44 @@ remember_canvas_layout() {
   local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/spatial-overview"
   mkdir -p "$state_dir"
   python3 - "$state_dir/canvas-memory.tsv" <<'EOF'
-import json, subprocess, sys, time
+import json, os, pathlib, shutil, subprocess, sys, time
 
+state = json.loads(subprocess.check_output(["hyprctl", "spatialoverview"]))
+if state.get("memory_version", 0) >= 2:
+    saved = subprocess.run(["hyprctl", "dispatch", 'hl.plugin.spatialoverview.canvas("save-memory")'], capture_output=True, text=True)
+    if saved.returncode or saved.stdout.strip() != "ok":
+        raise SystemExit("Cannot save canvas state; update stopped: " + saved.stdout + saved.stderr)
+    print("Saved canvas windows, groups and cameras through the running plugin.")
+    raise SystemExit(0)
+
+# One-time upgrade from builds without native group persistence. Stable IDs
+# identify live windows even when titles change or applications have siblings.
 clients = json.loads(subprocess.check_output(["hyprctl", "clients", "-j"]))
 monitors = json.loads(subprocess.check_output(["hyprctl", "monitors", "-j"]))
 now = int(time.time())
 clean = lambda s: s.replace("\t", " ").replace("\n", " ").replace("\r", " ")
-
-lines = ["# spatial-overview canvas memory v1"]
+path = pathlib.Path(sys.argv[1])
+lines = ["# spatial-overview canvas memory v2", "session\t" + clean(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", ""))]
+by_title = {}
+for c in clients:
+    if c.get("mapped"):
+        by_title.setdefault(c.get("title", ""), []).append(c)
+groups = {}
+for index, group in enumerate(state.get("groups", []), 1):
+    for title in group:
+        matches = by_title.get(title, [])
+        if len(matches) != 1:
+            raise SystemExit("Cannot safely migrate an ambiguous group member; existing plugin and state kept.")
+        groups[matches[0]["address"]] = index
 for monitor in monitors:
-    # Center each camera on the most recently used window it owns.
-    owned = [c for c in clients if c.get("monitor") == monitor["id"] and c.get("mapped") and c["workspace"]["id"] > 0]
-    if owned:
-        c = min(owned, key=lambda c: c.get("focusHistoryID", 1 << 30))
-        w, h = monitor["width"] / monitor["scale"], monitor["height"] / monitor["scale"]
-        cx, cy = c["at"][0] + c["size"][0] / 2, c["at"][1] + c["size"][1] / 2
-        lines.append(f"camera\t{monitor['name']}\t{cx - monitor['x'] - w / 2:.1f}\t{cy - monitor['y'] - h / 2:.1f}")
+    screen = next((s for s in state.get("screens", []) if s.get("name") == monitor["name"] or s.get("monitor") == monitor["name"]), None)
+    if not screen:
+        continue
+    x, y, w, h = screen["view"]
+    width, height = monitor["width"] / monitor["scale"], monitor["height"] / monitor["scale"]
+    cx, cy = x + w/2 - monitor["x"] - width/2, y + h/2 - monitor["y"] - height/2
+    zoom = screen["zoom"]
+    lines.append(f"camera\t{clean(monitor['name'])}\t{cx:.6f}\t{cy:.6f}\t{zoom:.6f}\t{int(screen['navigating'])}\t{cx:.6f}\t{cy:.6f}\t{zoom:.6f}")
 for c in clients:
     if not c.get("mapped") or not c.get("floating") or c["workspace"]["id"] <= 0 or c.get("pinned"):
         continue
@@ -40,9 +62,14 @@ for c in clients:
     if klass:
         x, y = c["at"]
         w, h = c["size"]
-        lines.append(f"window\t{klass}\t{title}\t{x:.1f}\t{y:.1f}\t{w:.1f}\t{h:.1f}\t{now}")
-open(sys.argv[1], "w").write("\n".join(lines) + "\n")
-print(f"Remembered where {len(lines) - 1} windows and cameras are.")
+        stable = int(c.get("stableId", "0"), 16)
+        lines.append(f"window\t{klass}\t{title}\t{x:.6f}\t{y:.6f}\t{w:.6f}\t{h:.6f}\t{now}\t{stable}\t{groups.get(c['address'], 0)}")
+if path.exists():
+    shutil.copy2(path, str(path) + ".pre-v2")
+temporary = path.with_name(path.name + ".next")
+temporary.write_text("\n".join(lines) + "\n")
+os.replace(temporary, path)
+print(f"Migrated {len(groups)} grouped windows and their layout without rearranging them.")
 EOF
 }
 

@@ -7,7 +7,7 @@
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 
 // Canvas-only groups never touch Hyprland's native tabbed groups. Weak refs
-// avoid keeping closed windows alive. State lasts until plugin unload.
+// avoid keeping closed windows alive. Memory persists associations when enabled.
 namespace SpatialOverview::CanvasGroups {
     using Members = std::vector<PHLWINDOWREF>;
     inline Members              selection;

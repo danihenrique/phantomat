@@ -1,4 +1,5 @@
 #pragma once
+#include "Memory.hpp"
 
 #define WLR_USE_UNSTABLE
 
@@ -89,6 +90,7 @@ class CScrollOverview : public IOverview {
     bool         cycleAltTab(int direction);
     void         noteCanvasLayoutChanged();
     Vector2D     restingCameraOffset() const;
+    SpatialOverview::Memory::SCamera memoryCamera() const;
     void         saveSharedCanvasLayout();
     void         loadSharedCanvasLayout();
     void         checkpointCanvas();
