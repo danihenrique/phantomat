@@ -40,6 +40,7 @@ hl.config({
       -- Input. Middle-drag pans the world; click selects; dragging into empty
       -- grid territory places a floating window without creating a workspace.
       input = {
+        ctrl_click_focus = false, -- outside overview: Ctrl-click frames window/group
         background_right_click = false, -- opt-in desktop background shortcut
         pan_sensitivity = 1.0,
         drag_threshold = 10,

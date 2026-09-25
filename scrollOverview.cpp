@@ -1754,6 +1754,13 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 g_pointerGrabOverview = nullptr;
         });
 
+        // A camera jump can put the pointer over a panel or another surface.
+        // Always consume the release paired with our intercepted press.
+        if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && navigatorSwallowedButtons.erase(event.button)) {
+            info.cancelled = true;
+            return;
+        }
+
         const bool POINTERONTOPLAYER =
             !dragPendingPrimary && !resizePointerDown && !scrollingPanPointerDown && !dragActiveWindow && !resizeActiveWindow && isPointerOnTopLayer(pMonitor.lock());
 
@@ -1825,11 +1832,6 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 return;
             }
 
-            if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && navigatorSwallowedButtons.erase(event.button)) {
-                info.cancelled = true;
-                return;
-            }
-
             if (ScrollOverview::Config::getBackgroundRightClick() && !MODS && event.button == BTN_RIGHT &&
                 event.state == WL_POINTER_BUTTON_STATE_PRESSED && !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !scrollingPanPointerDown &&
                 !clientGestureButton && !windowAtOverviewCursor() && (canvasNavigationActive || !canvasForwardedPointerSurface) &&
@@ -1893,6 +1895,19 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 }
                 requestInputFrame();
                 return;
+            }
+
+            if (ScrollOverview::Config::getCtrlClickFocus() && !canvasNavigationActive && !navigatorOwnsPointer() &&
+                MODS == HL_MODIFIER_CTRL && event.button == MAIN && event.state == WL_POINTER_BUTTON_STATE_PRESSED &&
+                !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !scrollingPanPointerDown) {
+                if (const auto WINDOW = windowAtOverviewCursor(); WINDOW && !WINDOW->m_pinned && !Fullscreen::controller()->isFullscreen(WINDOW)) {
+                    navigatorSwallowedButtons.emplace(event.button);
+                    g_pointerGrabOverview = this;
+                    info.cancelled = true;
+                    landOnWindow(WINDOW);
+                    requestInputFrame();
+                    return;
+                }
             }
 
             if (event.button != SECONDARY && !WINDOWGESTURE && !navigatorOwnsPointer() &&

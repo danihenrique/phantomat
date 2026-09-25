@@ -364,6 +364,8 @@ static void registerConfigValues() {
                                   makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_rows", "number of vertical focus regions", 1, SIntValueOptions{.min = 1, .max = 8}));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_row", "preferred focus region, -1 follows spatial position, otherwise zero-based", 0, SIntValueOptions{.min = -1, .max = 7}));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CBoolValue>("plugin:spatialoverview:input:ctrl_click_focus", "Ctrl-primary-click frames a window or group outside the navigator", false));
     HyprlandAPI::addConfigValueV2(
         SCROLLOVERVIEW_HANDLE,
         makeShared<CBoolValue>("plugin:spatialoverview:input:background_right_click", "open navigator with an unmodified right click on desktop background", false));
@@ -685,6 +687,10 @@ int getCanvasFocusRow() {
 bool getBackgroundRightClick() {
     return getValue<bool>("plugin:spatialoverview:input:background_right_click");
 }
+bool getCtrlClickFocus() {
+    return getValue<bool>("plugin:spatialoverview:input:ctrl_click_focus");
+}
+
 bool getNavigatorClickToFocus() {
     return getValue<bool>("plugin:spatialoverview:navigator:click_to_focus");
 }

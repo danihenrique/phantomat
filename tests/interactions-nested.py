@@ -104,6 +104,20 @@ try:
     config('navigator={click_to_focus=false}')
     click('GroupB'); time.sleep(1)
     check(not screen()['navigating'], 'plain click opens when groups enabled')
+    c=client('GroupB'); original=c['at'][:]
+    move('GroupB',original[0]+100,original[1]+60); time.sleep(.8)
+    before=screen()
+    click('GroupB','ctrl')
+    check(screen()['view']==before['view'], 'outside Ctrl-click preserves app behavior by default')
+    config('input={ctrl_click_focus=true}')
+    click('GroupB','ctrl'); time.sleep(1)
+    s=screen(); c=client('GroupB')
+    check(not s['navigating'] and n.active()['title']=='GroupB' and not state()['selection'], 'outside Ctrl-click focuses without entering overview or selecting')
+    check(abs(c['at'][0]+c['size'][0]/2-s['view'][0]-s['view'][2]/2)<5 and
+          abs(c['at'][1]+c['size'][1]/2-s['view'][1]-s['view'][3]/2)<5, 'outside Ctrl-click centers single window')
+    check(c['at']==[original[0]+100,original[1]+60], 'outside focus preserves world position')
+    move('GroupB',*original)
+
     mouse('abs',3,3,'rdown','rup'); canvas('viewport 0 0'); time.sleep(1)
     click('GroupA','ctrl'); click('GroupB','ctrl'); click('GroupC','ctrl')
     check(set(state()['selection'])=={'GroupA','GroupB','GroupC'}, 'Ctrl-click selects three windows')
@@ -155,7 +169,8 @@ try:
     check(z<1, 'large group zooms out to fit one physical panel')
     check(abs((cy-v[1])*z-H*.25)<5, 'group lands centered on upper physical panel')
     config('canvas={focus_row=1}')
-    canvas('search GroupA'); n.keys('-k','Return'); time.sleep(1)
+    click('GroupA','ctrl'); time.sleep(1)
+    check(not screen()['navigating'] and not state()['selection'], 'outside Ctrl-click frames group without selection')
     s=screen(); v=s['view']; z=s['zoom']
     check(abs((cy-v[1])*z-H*.75)<5, 'group lands centered on lower physical panel')
     config('canvas={focus_row=-1}')

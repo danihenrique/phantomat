@@ -113,6 +113,7 @@ bool          getCanvasDesktopMode();
 bool          getCanvasPersistent();
 bool          getCanvasLinkedScreens();
 bool                                        getBackgroundRightClick();
+bool                                        getCtrlClickFocus();
 bool                                        getNavigatorClickToFocus();
 bool                                        getCanvasGroups();
 std::string   getCanvasFocusMonitor();
