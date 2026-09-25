@@ -114,6 +114,8 @@ bool          getCanvasPersistent();
 bool          getCanvasLinkedScreens();
 bool                                        getBackgroundRightClick();
 bool                                        getCtrlClickFocus();
+bool                                        getButtonChordFocus();
+int                                         getButtonChordTimeout();
 bool                                        getNavigatorClickToFocus();
 bool                                        getCanvasGroups();
 std::string   getCanvasFocusMonitor();

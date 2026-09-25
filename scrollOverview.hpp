@@ -222,6 +222,8 @@ class CScrollOverview : public IOverview {
     void         ensureCanvasKeyboardFocus(PHLWINDOW window = {});
     void         seedCanvasWindows();
     void         forwardCanvasPointerMotion(uint32_t timeMs = 0);
+    bool         handleFocusChord(const IPointer::SButtonEvent& event);
+    bool         flushFocusChord();
     bool         forwardCanvasPointerButton(const IPointer::SButtonEvent& event);
     bool         forwardCanvasPointerAxis(const IPointer::SAxisEvent& event);
     Vector2D     canvasCellForWorkspaceIndex(size_t workspaceIdx) const;
@@ -339,6 +341,11 @@ class CScrollOverview : public IOverview {
     Layout::eRectCorner              resizeCorner           = Layout::CORNER_NONE;
     bool                             dragPendingPrimary    = false;
     bool                             resizePointerDown     = false;
+    std::optional<IPointer::SButtonEvent> focusChordPending;
+    PHLWINDOWREF focusChordWindow;
+    Vector2D focusChordStart{};
+    wl_event_source* focusChordTimer = nullptr;
+    std::unordered_set<uint32_t> focusChordConsumed;
     bool                             backgroundPanDown = false;
     bool                             backgroundPanMoved = false;
     bool                             backgroundPanCloseOnClick = false;

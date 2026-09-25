@@ -365,6 +365,10 @@ static void registerConfigValues() {
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_row", "preferred focus region, -1 follows spatial position, otherwise zero-based", 0, SIntValueOptions{.min = -1, .max = 7}));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CBoolValue>("plugin:spatialoverview:input:button_chord_focus", "left+right button chord frames a window or group outside the navigator", false));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CIntValue>("plugin:spatialoverview:input:button_chord_timeout", "maximum milliseconds between focus-chord presses", 120, SIntValueOptions{.min = 30, .max = 300}));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:input:ctrl_click_focus", "Ctrl-primary-click frames a window or group outside the navigator", false));
     HyprlandAPI::addConfigValueV2(
         SCROLLOVERVIEW_HANDLE,
@@ -686,6 +690,12 @@ int getCanvasFocusRow() {
 
 bool getBackgroundRightClick() {
     return getValue<bool>("plugin:spatialoverview:input:background_right_click");
+}
+bool getButtonChordFocus() {
+    return getValue<bool>("plugin:spatialoverview:input:button_chord_focus");
+}
+int getButtonChordTimeout() {
+    return std::clamp(getValue<int>("plugin:spatialoverview:input:button_chord_timeout"), 30, 300);
 }
 bool getCtrlClickFocus() {
     return getValue<bool>("plugin:spatialoverview:input:ctrl_click_focus");

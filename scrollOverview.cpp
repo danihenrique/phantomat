@@ -1442,6 +1442,10 @@ static void moveOverviewTargetNextToWindow(const SP<Layout::ITarget>& target, co
 }
 
 CScrollOverview::~CScrollOverview() {
+    if (focusChordTimer)
+        wl_event_source_remove(focusChordTimer);
+    focusChordTimer = nullptr;
+    focusChordPending.reset();
     if (!groupDragMembers.empty())
         clearDragPending();
     if (g_pointerGrabOverview == this)
@@ -1620,6 +1624,18 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
         const float    DRAGTHRESHOLDSQ       = std::pow(DRAGTHRESHOLD, 2);
 
         lastMousePosLocal = getOverviewMousePosLocal(pMonitor.lock());
+        if (!focusChordConsumed.empty()) {
+            info.cancelled = true;
+            return;
+        }
+        if (focusChordPending) {
+            if (focusChordStart.distanceSq(lastMousePosLocal) > DRAGTHRESHOLDSQ)
+                flushFocusChord();
+            else {
+                info.cancelled = true;
+                return;
+            }
+        }
         if (backgroundPanDown) {
             info.cancelled = true;
             if (!canvasNavigationActive)
@@ -1774,9 +1790,15 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
 
         const bool RELEASESPOINTERGRAB = event.state == WL_POINTER_BUTTON_STATE_RELEASED;
         auto       releasePointerGrab  = Hyprutils::Utils::CScopeGuard([this, RELEASESPOINTERGRAB] {
-            if (RELEASESPOINTERGRAB && g_pointerGrabOverview == this)
+            if (RELEASESPOINTERGRAB && g_pointerGrabOverview == this && focusChordConsumed.empty())
                 g_pointerGrabOverview = nullptr;
         });
+
+        if ((focusChordPending || !focusChordConsumed.empty()) && handleFocusChord(event)) {
+            info.cancelled = true;
+            requestInputFrame();
+            return;
+        }
 
         if (event.button == BTN_RIGHT && event.state == WL_POINTER_BUTTON_STATE_RELEASED && backgroundPanDown) {
             info.cancelled = true;
@@ -1928,6 +1950,12 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                     resizePendingWindow.reset();
                     g_pInputManager->releaseAllMouseButtons();
                 }
+                requestInputFrame();
+                return;
+            }
+
+            if (handleFocusChord(event)) {
+                info.cancelled = true;
                 requestInputFrame();
                 return;
             }
@@ -5130,6 +5158,85 @@ void CScrollOverview::forwardCanvasPointerMotion(uint32_t timeMs) {
         }
         selectOverviewWindow(WINDOW, workspaceIdx, true);
     }
+}
+
+bool CScrollOverview::flushFocusChord() {
+    if (!focusChordPending)
+        return false;
+    const auto event = *focusChordPending;
+    const auto window = focusChordWindow.lock();
+    focusChordPending.reset();
+    focusChordWindow.reset();
+    if (focusChordTimer)
+        wl_event_source_timer_update(focusChordTimer, 0);
+    if (sessionLocked()) {
+        if (g_pointerGrabOverview == this) g_pointerGrabOverview = nullptr;
+        return false;
+    }
+    const auto current = lastMousePosLocal;
+    lastMousePosLocal = focusChordStart;
+    const bool valid = !closing && !canvasNavigationActive && window && window->m_isMapped && windowAtOverviewPoint(focusChordStart) == window;
+    const bool sent = valid && forwardCanvasPointerButton(event);
+    lastMousePosLocal = current;
+    if (!sent)
+        navigatorSwallowedButtons.emplace(event.button);
+    return sent;
+}
+
+bool CScrollOverview::handleFocusChord(const IPointer::SButtonEvent& event) {
+    const bool pressed = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
+    const bool pairButton = event.button == BTN_LEFT || event.button == BTN_RIGHT;
+    if (!focusChordConsumed.empty() && pairButton) {
+        if (pressed) focusChordConsumed.insert(event.button);
+        else focusChordConsumed.erase(event.button);
+        return true;
+    }
+    const auto mods = g_pInputManager->getModsFromAllKBs();
+    const bool available = ScrollOverview::Config::getButtonChordFocus() && isCanvasDesktop() && ScrollOverview::Config::getCanvasDirectInput() &&
+        !canvasNavigationActive && !navigatorOwnsPointer() && !mods && !backgroundPanDown && !spacePanHeld && !clientGestureButton &&
+        !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !resizeActiveWindow && !scrollingPanPointerDown;
+    const auto point = getOverviewMousePosLocal(pMonitor.lock());
+    if (focusChordPending) {
+        const auto first = *focusChordPending;
+        const auto window = focusChordWindow.lock();
+        const auto threshold = ScrollOverview::Config::getDragThreshold() * (pMonitor ? pMonitor->m_scale : 1.F);
+        if (available && pairButton && pressed && event.button != first.button && window && window->m_isMapped &&
+            !isPointerOnTopLayer(pMonitor.lock()) && windowAtOverviewPoint(point) == window && focusChordStart.distanceSq(point) <= threshold * threshold) {
+            focusChordPending.reset();
+            focusChordWindow.reset();
+            wl_event_source_timer_update(focusChordTimer, 0);
+            focusChordConsumed = {BTN_LEFT, BTN_RIGHT};
+            lastMousePosLocal = point;
+            landOnWindow(window);
+            return true;
+        }
+        const bool sent = flushFocusChord();
+        if (!pressed && event.button == first.button) {
+            if (sent) forwardCanvasPointerButton(event);
+            navigatorSwallowedButtons.erase(event.button);
+            return true;
+        }
+    }
+    if (!available || !pressed || !pairButton || !canvasForwardedPointerButtons.empty() || isPointerOnTopLayer(pMonitor.lock()))
+        return false;
+    const auto window = windowAtOverviewPoint(point);
+    if (!window || window->m_pinned || Fullscreen::controller()->isFullscreen(window))
+        return false;
+    if (!focusChordTimer)
+        focusChordTimer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, [](void* data) {
+            auto* canvas = static_cast<CScrollOverview*>(data);
+            canvas->flushFocusChord();
+            canvas->requestInputFrame();
+            return 0;
+        }, this);
+    if (!focusChordTimer)
+        return false;
+    focusChordPending = event;
+    focusChordWindow = window;
+    focusChordStart = point;
+    g_pointerGrabOverview = this;
+    wl_event_source_timer_update(focusChordTimer, ScrollOverview::Config::getButtonChordTimeout());
+    return true;
 }
 
 bool CScrollOverview::forwardCanvasPointerButton(const IPointer::SButtonEvent& event) {

@@ -146,6 +146,13 @@ Merge these fields into the existing tables; do not replace your other settings.
   windows to the right. Releasing after a drag keeps the navigator open. A short
   right-click while navigating closes it and restores the view from before entering. Application windows, layer panels, popups and the lock screen are
   excluded. Right-clicking an app retains its normal behavior.
+- `input.button_chord_focus` (default `false`): outside the overview, press left
+  and right together over a window to focus and frame it or its group, in either
+  order. Both presses must overlap within `input.button_chord_timeout` (default
+  120 ms, range 30–300). The first press waits up to this interval so the app
+  receives neither click when the chord succeeds. Releasing or starting a drag
+  delivers an ordinary click immediately. Desktop-background gestures and
+  modified clicks are excluded.
 - `input.ctrl_click_focus` (default `false`): outside the overview, **Ctrl+primary-click**
   focuses and frames the window or its entire spatial group, respecting focus
   regions. The gesture is consumed instead of being sent to the app. Ordinary
