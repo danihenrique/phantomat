@@ -9563,8 +9563,23 @@ Vector2D CScrollOverview::canvasCameraOffsetFor(const PHLWINDOW& window, float z
         // where title bars, tabs and menus live.
         if (BOX.width > MONITOR->m_size.x)
             target.x = BOX.x + MONITOR->m_size.x * 0.5;
-        if (BOX.height > MONITOR->m_size.y)
-            target.y = BOX.y + MONITOR->m_size.y * 0.5;
+        // Some dual-panel displays expose one tall output. Focus within one
+        // physical panel instead of centering on its bezel. Only the camera
+        // moves; the window's world position and the overview stay unchanged.
+        const int ROWS = MONITOR->m_name == ScrollOverview::Config::getCanvasFocusMonitor() ? ScrollOverview::Config::getCanvasFocusRows() : 1;
+        int ROW = ROWS > 1 ? ScrollOverview::Config::getCanvasFocusRow() : 0;
+        const double HEIGHT = MONITOR->m_size.y / ROWS;
+        if (ROW < 0) {
+            // Use the desktop before opening search, not the zoomed-out view.
+            const Vector2D ORIGIN = MONITOR->m_position + (canvasNavigationActive && hasNavigationReturn ? navigationReturnOffset : viewOffset->value());
+            const double LOCALY = BOX.middle().y - ORIGIN.y;
+            // Preserve spatial direction, including windows beyond the viewport.
+            // Above the screen lands on the top panel; below lands on the bottom.
+            ROW = static_cast<int>(std::clamp(std::floor(LOCALY / HEIGHT), 0.0, static_cast<double>(ROWS - 1)));
+        }
+        if (BOX.height > HEIGHT)
+            target.y = BOX.y + HEIGHT * 0.5;
+        target.y += MONITOR->m_size.y * 0.5 - (ROW + 0.5) * HEIGHT;
     }
     return target - MONITOR->m_position - MONITOR->m_size * 0.5F;
 }
@@ -9691,10 +9706,11 @@ void CScrollOverview::landOnWindow(PHLWINDOW window) {
     Desktop::windowState()->raise(window);
     followCanvasWindow(window, true, true);
 
+    const auto LANDINGOFFSET = canvasCameraOffsetFor(window, 1.F, false);
     canvasNavigationActive = false;
     canvasPinching         = false;
     landingDrag            = false;
-    *viewOffset            = canvasCameraOffsetFor(window, 1.F, false);
+    *viewOffset            = LANDINGOFFSET;
     *scale                 = 1.F;
     *transitionProgress    = 0.F;
     leaveNavigatorPointer();

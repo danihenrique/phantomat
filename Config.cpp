@@ -355,6 +355,12 @@ static void registerConfigValues() {
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:linked_screens", "screens show adjacent parts of the canvas and move together, like one wide desk", true));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CStringValue>("plugin:spatialoverview:canvas:focus_monitor", "output with vertically stacked physical panels; empty disables", ""));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_rows", "number of vertical focus regions", 1, SIntValueOptions{.min = 1, .max = 8}));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_row", "preferred focus region, -1 follows spatial position, otherwise zero-based", 0, SIntValueOptions{.min = -1, .max = 7}));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:places", "workspace keys go to places on the canvas (experimental); off, they do nothing on the canvas", false));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CFloatValue>("plugin:spatialoverview:canvas:initial_zoom", "initial shared-canvas camera zoom", 0.72F,
@@ -654,6 +660,16 @@ bool getCanvasPlaces() {
 
 bool getCanvasLinkedScreens() {
     return getValue<bool>("plugin:spatialoverview:canvas:linked_screens");
+}
+
+std::string getCanvasFocusMonitor() {
+    return getValue<std::string>("plugin:spatialoverview:canvas:focus_monitor");
+}
+int getCanvasFocusRows() {
+    return std::clamp(getValue<int>("plugin:spatialoverview:canvas:focus_rows"), 1, 8);
+}
+int getCanvasFocusRow() {
+    return std::clamp(getValue<int>("plugin:spatialoverview:canvas:focus_row"), -1, getCanvasFocusRows() - 1);
 }
 
 bool getCanvasPersistent() {
