@@ -126,6 +126,53 @@ them too.
 With the mouse: click a window to go to it, drag a window to move it, drag the
 empty canvas to pan, scroll to zoom, click the minimap to jump.
 
+## Optional mouse controls and spatial groups
+
+These controls are opt-in. Existing click and navigation behavior remains the
+same unless enabled in `~/.config/hypr/spatialoverview.lua`:
+
+```lua
+-- Inside plugin.spatialoverview:
+input = { background_right_click = true },
+navigator = { click_to_focus = true },
+canvas = { groups = true },
+```
+
+Merge these fields into the existing tables; do not replace your other settings.
+
+- `input.background_right_click`: an unmodified physical right-click on empty
+  desktop background opens the navigator, including before the first canvas
+  session. Application windows, layer panels, popups and the lock screen are
+  excluded. Right-clicking an app retains its normal behavior.
+- `navigator.click_to_focus`: primary-click a window or search result to focus
+  and raise it without moving the camera or leaving the overview. **Enter**
+  still lands on the focused window. The primary button respects left-handed
+  configuration.
+- `canvas.groups`: **Ctrl+click** toggles selection of floating windows (or
+  search results). **Ctrl+G** brings selected windows together in a compact
+  grid, in selection order, preserving their sizes. **Ctrl+Shift+G** dissolves
+  groups containing the selection, or the focused window's group when no
+  multi-selection is present. **Esc** clears multi-selection first.
+
+Selected windows have a strong accent outline; grouped windows have a lighter
+one. Drag a member to move the group; **Shift+drag** moves just that member.
+Resize members independently. Landing on a member centers the bounding box of
+all members, zooming out if needed within the configured minimum zoom. Group
+framing uses the whole output rather than a single configured focus region.
+Creating a group and moving it use the existing positional undo/redo history;
+undo restores geometry, not group membership.
+
+These are spatial associations, separate from Hyprland's tabbed groups. Pinned,
+natively grouped and fullscreen windows cannot be added. Fullscreen temporarily
+suspends group framing. Closed windows are removed automatically. Groups last
+for the plugin session (including closing/reopening the canvas), but are not
+saved across plugin reloads or login sessions. Window positions keep their
+existing persistence behavior.
+
+Script actions: `canvas("select")`, `canvas("clear-selection")`,
+`canvas("group")`, `canvas("ungroup")`, `canvas("frame-group")`.
+`hyprctl spatialoverview` includes `selection` and `groups` arrays of window titles.
+
 ## Tuning
 
 `CTRL + ,` in the zoomed-out canvas turns the search bar into a list of

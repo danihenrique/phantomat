@@ -81,6 +81,7 @@
 #include "Icons.hpp"
 #include "Memory.hpp"
 #include "Navigator.hpp"
+#include "CanvasGroups.hpp"
 #include "Tuning.hpp"
 #include "DropIndicator.hpp"
 #include "OverviewPassElement.hpp"
@@ -438,6 +439,36 @@ static bool isPointerOnTopLayer(PHLMONITOR monitor) {
     layerSurface.reset();
     return Desktop::viewState()->hitTest().layerSurfaceAt(MOUSECOORDS, &monitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords, &layerSurface) &&
         !isAnimatedChrome(layerSurface);
+}
+
+static bool canvasBackgroundLayersClear(PHLMONITOR monitor) {
+    if (!monitor || isPointerOnTopLayer(monitor))
+        return false;
+    const auto pos = g_pInputManager->getMouseCoordsInternal();
+    Vector2D   local;
+    PHLLS      layer;
+    return !Desktop::viewState()->hitTest().layerPopupSurfaceAt(pos, monitor, &local, &layer) &&
+        !Desktop::viewState()->hitTest().layerSurfaceAt(pos, &monitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM], &local, &layer);
+}
+
+// Only native desktop background: exclude app surfaces, layer panels/popups,
+// lock screens and any overview (which has its own transformed hit testing).
+static bool sessionLocked();
+bool        canvasNativeBackgroundAtCursor() {
+    if (sessionLocked())
+        return false;
+    const auto pos = g_pInputManager->getMouseCoordsInternal();
+    if (scrollOverviewAt(pos))
+        return false;
+    PHLMONITOR monitor;
+    for (const auto& candidate : State::monitorState()->monitors())
+        if (candidate->logicalBox().containsPoint(pos)) {
+            monitor = candidate;
+            break;
+        }
+    if (!canvasBackgroundLayersClear(monitor))
+        return false;
+    return !Desktop::viewState()->hitTest().windowAt(pos, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
 }
 
 static PHLWINDOW getOverviewWindowToShow(const PHLWINDOW& window) {
@@ -1411,6 +1442,8 @@ static void moveOverviewTargetNextToWindow(const SP<Layout::ITarget>& target, co
 }
 
 CScrollOverview::~CScrollOverview() {
+    if (!groupDragMembers.empty())
+        clearDragPending();
     if (g_pointerGrabOverview == this)
         g_pointerGrabOverview = nullptr;
     transferSharedStateOwnership();
@@ -1797,14 +1830,44 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 return;
             }
 
+            if (ScrollOverview::Config::getBackgroundRightClick() && !canvasNavigationActive && !MODS && event.button == BTN_RIGHT &&
+                event.state == WL_POINTER_BUTTON_STATE_PRESSED && !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !scrollingPanPointerDown &&
+                !clientGestureButton && !windowAtOverviewCursor() && !canvasForwardedPointerSurface && canvasBackgroundLayersClear(pMonitor.lock())) {
+                navigatorSwallowedButtons.emplace(event.button);
+                info.cancelled = true;
+                openNavigator();
+                requestInputFrame();
+                return;
+            }
+
+            if (ScrollOverview::Config::getCanvasGroups() && navigatorOwnsPointer() && event.button == MAIN && event.state == WL_POINTER_BUTTON_STATE_PRESSED &&
+                (MODS & HL_MODIFIER_CTRL) && !WINDOWGESTURE && (!showsNavigatorHud() || SpatialOverview::Hud::paletteHit(RAWLOCAL) == SpatialOverview::Hud::PALETTE_MISS)) {
+                if (const auto WINDOW = windowAtOverviewCursor()) {
+                    SpatialOverview::CanvasGroups::toggle(WINDOW);
+                    SpatialOverview::Navigator::showNotice(std::format("{} selected · Ctrl+G group · Ctrl+Shift+G ungroup", SpatialOverview::CanvasGroups::selection.size()));
+                } else
+                    SpatialOverview::CanvasGroups::selection.clear();
+                navigatorSwallowedButtons.emplace(event.button);
+                info.cancelled = true;
+                damage();
+                return;
+            }
+
             if (event.button == MAIN && event.state == WL_POINTER_BUTTON_STATE_PRESSED && showsNavigatorHud()) {
                 PHLWINDOW ROWWINDOW;
                 const int HIT = SpatialOverview::Hud::paletteHit(RAWLOCAL, &ROWWINDOW);
                 if (HIT != SpatialOverview::Hud::PALETTE_MISS) {
                     info.cancelled = true;
                     navigatorSwallowedButtons.emplace(event.button);
-                    if (HIT >= 0 && ROWWINDOW)
-                        landOnWindow(ROWWINDOW);
+                    if (HIT >= 0 && ROWWINDOW) {
+                        if (ScrollOverview::Config::getCanvasGroups() && (MODS & HL_MODIFIER_CTRL) && !WINDOWGESTURE) {
+                            SpatialOverview::CanvasGroups::toggle(ROWWINDOW);
+                            SpatialOverview::Navigator::showNotice(std::format("{} selected · Ctrl+G group", SpatialOverview::CanvasGroups::selection.size()));
+                        } else if (ScrollOverview::Config::getNavigatorClickToFocus())
+                            focusCanvasClick(ROWWINDOW);
+                        else
+                            landOnWindow(ROWWINDOW);
+                    }
                     requestInputFrame();
                     return;
                 }
@@ -1884,10 +1947,13 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
             if (isCanvasDesktop()) {
                 size_t workspaceIdx = 0;
                 const auto WINDOW = windowAtOverviewCursor(&workspaceIdx);
-                if (WINDOW && navigatorOwnsPointer() && button == MAIN_BUTTON)
-                    landOnWindow(WINDOW);
-                else if (WINDOW)
-                    selectOverviewWindow(WINDOW, workspaceIdx, false);
+                if (WINDOW && navigatorOwnsPointer() && button == MAIN_BUTTON) {
+                    if (ScrollOverview::Config::getNavigatorClickToFocus())
+                        focusCanvasClick(WINDOW);
+                    else
+                        landOnWindow(WINDOW);
+                } else if (WINDOW)
+                    selectOverviewWindow(WINDOW, workspaceIdx, button == MAIN_BUTTON);
                 return;
             }
 
@@ -4192,11 +4258,22 @@ std::string canvasStateJson() {
         const auto MONITOR = entry.monitor.lock();
         fullscreen += std::format("{}{{\"window\": {}, \"monitor\": {}}}", fullscreen.empty() ? "" : ", ", jsonString(WINDOW ? WINDOW->m_title : ""), jsonString(MONITOR ? MONITOR->m_name : ""));
     }
+    SpatialOverview::CanvasGroups::prune();
+    const auto titles = [](const SpatialOverview::CanvasGroups::Members& members) {
+        std::string out;
+        for (const auto& ref : members)
+            if (const auto w = ref.lock())
+                out += (out.empty() ? "" : ", ") + jsonString(w->m_title);
+        return "[" + out + "]";
+    };
+    std::string groups;
+    for (const auto& group : SpatialOverview::CanvasGroups::groups)
+        groups += (groups.empty() ? "" : ", ") + titles(group);
     const auto* LEADER   = g_linkedLeader;
     const auto  SELECTED = SpatialOverview::Navigator::isOpen() ? SpatialOverview::Navigator::selectedWindow() : PHLWINDOW{};
-    return std::format("{{\"linked\": {}, \"leader\": {}, \"screens\": [{}], \"fullscreen\": [{}], \"filled\": [{}], \"selected\": {}}}\n",
+    return std::format("{{\"linked\": {}, \"leader\": {}, \"screens\": [{}], \"fullscreen\": [{}], \"filled\": [{}], \"selected\": {}, \"selection\": {}, \"groups\": [{}]}}\n",
                        ScrollOverview::Config::getCanvasLinkedScreens() ? "true" : "false", jsonString(LEADER && LEADER->canvasMonitor() ? LEADER->canvasMonitor()->m_name : ""),
-                       screens, fullscreen, canvasFillJson(), jsonString(SELECTED ? SELECTED->m_title : ""));
+                       screens, fullscreen, canvasFillJson(), jsonString(SELECTED ? SELECTED->m_title : ""), titles(SpatialOverview::CanvasGroups::selection), groups);
 }
 
 // ---- Fill the screen (Super+T on the canvas) ---------------------------------------
@@ -4531,6 +4608,10 @@ bool CScrollOverview::followCanvasWindow(PHLWINDOW window, bool syncFocus, bool 
     if (syncFocus && Desktop::focusState()->monitor() != MONITOR)
         Desktop::focusState()->rawMonitorFocus(MONITOR);
 
+    if (!canvasNavigationActive && frameCanvasGroup(window, true))
+        return true;
+    if (!canvasNavigationActive && ScrollOverview::Config::getCanvasGroups())
+        *scale = 1.F;
     const auto CAMERAOFFSET = canvasCameraOffsetFor(window, scale->goal(), canvasNavigationActive);
     if (animate)
         *viewOffset = CAMERAOFFSET;
@@ -5496,6 +5577,14 @@ void CScrollOverview::beginWindowDrag(PHLWINDOW window) {
         dragGrabRatio       = Vector2D{0.5, 0.5};
     }
 
+    groupDragMembers.clear();
+    if (isCanvasDesktop() && ScrollOverview::Config::getCanvasGroups() && !(g_pInputManager->getModsFromAllKBs() & HL_MODIFIER_SHIFT)) {
+        for (const auto& ref : SpatialOverview::CanvasGroups::members(WINDOW)) {
+            const auto member = ref.lock();
+            if (member && member != WINDOW && member->layoutTarget())
+                groupDragMembers.emplace_back(member, member->layoutTarget()->position());
+        }
+    }
     updateWindowDrag();
 }
 
@@ -5525,9 +5614,31 @@ void CScrollOverview::beginWindowResize() {
     updateWindowResize();
 }
 
+void CScrollOverview::translateGroupDrag(const Vector2D& delta) {
+    for (const auto& [ref, original] : groupDragMembers) {
+        const auto member = ref.lock();
+        if (!SpatialOverview::CanvasGroups::eligible(member) || !member->layoutTarget())
+            continue;
+        const auto target = member->layoutTarget();
+        auto       box    = original;
+        box.x += delta.x;
+        box.y += delta.y;
+        target->damageEntire();
+        target->setPositionGlobal(box);
+        target->warpPositionSize();
+        target->damageEntire();
+    }
+}
+
 void CScrollOverview::updateWindowDrag() {
     if (!dragActiveWindow)
         return;
+    if (!groupDragMembers.empty()) {
+        const auto window = dragActiveWindow.lock();
+        const auto idx    = dragWorkspaceIndex(window);
+        const auto box    = draggedWindowBox(idx);
+        translateGroupDrag(overviewPointToGlobal(idx, box.pos()) - dragOriginalBox.pos());
+    }
 
     for (const auto& overview : scrollOverviews()) {
         if (!overview)
@@ -5573,6 +5684,8 @@ void CScrollOverview::updateWindowResize() {
 }
 
 void CScrollOverview::clearDragPending() {
+    translateGroupDrag({});
+    groupDragMembers.clear();
     dragPendingPrimary          = false;
     dragActiveWindow.reset();
     dragOriginalWorkspace.reset();
@@ -6162,6 +6275,9 @@ void CScrollOverview::endWindowDrag() {
         g_pseudoFocusUntil    = Time::steadyNow() + POST_DROP_PSEUDO_FOCUS_DURATION;
     }
 
+    if (TARGET && !groupDragMembers.empty())
+        translateGroupDrag(TARGET->position().pos() - dragOriginalBox.pos());
+    groupDragMembers.clear(); // commit; clearDragPending otherwise cancels the preview
     clearDragPending();
     rebuildPending = true;
     noteCanvasLayoutChanged();
@@ -6624,6 +6740,10 @@ bool CScrollOverview::moveSelection(const std::string& direction) {
         if (Desktop::focusState()->monitor() != MONITOR)
             Desktop::focusState()->rawMonitorFocus(MONITOR);
 
+        if (!canvasNavigationActive && frameCanvasGroup(bestCandidate, true))
+            return true;
+        if (!canvasNavigationActive && ScrollOverview::Config::getCanvasGroups())
+            *scale = 1.F;
         *viewOffset = canvasCameraOffsetFor(bestCandidate, scale->goal(), canvasNavigationActive);
         if (canvasNavigationActive)
             SpatialOverview::Navigator::selectWindow(bestCandidate);
@@ -9552,7 +9672,10 @@ Vector2D CScrollOverview::canvasCameraOffsetFor(const PHLWINDOW& window, float z
     if (!MONITOR || !window)
         return viewOffset->goal();
 
-    const auto BOX    = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    const auto GROUP = ScrollOverview::Config::getCanvasGroups() ? SpatialOverview::CanvasGroups::bounds(window) : std::nullopt;
+    const auto BOX   = GROUP.value_or(window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
+    if (GROUP && !navigating)
+        return BOX.middle() - MONITOR->m_position - MONITOR->m_size * 0.5F;
     auto       target = BOX.middle();
     if (navigating) {
         // Keep the selection clear of the search palette above it.
@@ -9691,6 +9814,100 @@ void CScrollOverview::finishSwitcher(bool cancel) {
     Navigator::noteFocus(WINDOW, true);
 }
 
+bool CScrollOverview::createCanvasGroup() {
+    namespace Groups = SpatialOverview::CanvasGroups;
+    Groups::prune();
+    const auto picked  = Groups::selection;
+    const auto MONITOR = pMonitor.lock();
+    if (!MONITOR || picked.size() < 2)
+        return false;
+    for (const auto& ref : picked)
+        if (!SpatialOverview::CanvasGroups::eligible(ref.lock()) || !ref.lock()->layoutTarget())
+            return false;
+    checkpointCanvas();
+    const auto   first   = picked.front().lock();
+    const auto   anchor  = first->layoutTarget()->position().pos();
+    const size_t columns = std::clamp<size_t>(std::ceil(std::sqrt(picked.size() * MONITOR->m_size.x / MONITOR->m_size.y)), 1, picked.size());
+    const double gap     = std::max(0, ScrollOverview::Config::getCanvasPlacementGap());
+    double       x = anchor.x, y = anchor.y, rowHeight = 0;
+    for (size_t i = 0; i < picked.size(); ++i) {
+        if (i && i % columns == 0) {
+            x = anchor.x;
+            y += rowHeight + gap;
+            rowHeight = 0;
+        }
+        const auto target = picked[i].lock()->layoutTarget();
+        auto       box    = target->position();
+        box.x             = x;
+        box.y             = y;
+        target->damageEntire();
+        target->setPositionGlobal(box);
+        target->warpPositionSize();
+        target->damageEntire();
+        x += box.width + gap;
+        rowHeight = std::max(rowHeight, box.height);
+    }
+    Groups::create();
+    focusCanvasClick(first);
+    frameCanvasGroup(first, false);
+    noteCanvasLayoutChanged();
+    SpatialOverview::Navigator::showNotice(std::format("Grouped {} windows · Shift-drag adjusts one · Ctrl+Shift+G ungroups", picked.size()));
+    return true;
+}
+
+bool CScrollOverview::frameCanvasGroup(PHLWINDOW window, bool land) {
+    if (!ScrollOverview::Config::getCanvasGroups())
+        return false;
+    const auto bounds  = SpatialOverview::CanvasGroups::bounds(window);
+    const auto MONITOR = pMonitor.lock();
+    if (!bounds || !MONITOR || bounds->empty())
+        return false;
+    if (!land && !canvasNavigationActive)
+        toggleCanvasNavigation();
+    const double usableHeight = MONITOR->m_size.y * (land ? 0.9 : 0.7);
+    const float  zoom   = std::clamp<float>(std::min(MONITOR->m_size.x * 0.9 / bounds->width, usableHeight / bounds->height), std::min(ScrollOverview::Config::getCanvasMinZoom(), 1.F), 1.F);
+    auto         center = bounds->middle();
+    if (!land && showsNavigatorHud())
+        center.y -= (SpatialOverview::Hud::selectionFocusY(MONITOR->m_size) - MONITOR->m_size.y * 0.5) / zoom;
+    *viewOffset = center - MONITOR->m_position - MONITOR->m_size * 0.5;
+    *scale      = zoom;
+    if (land) {
+        canvasNavigationActive = false;
+        canvasPinching         = false;
+        landingDrag            = false;
+        *transitionProgress    = 0.F;
+        leaveNavigatorPointer();
+        for (const auto& overview : scrollOverviews()) {
+            auto* canvas = canvasOf(overview);
+            if (canvas && canvas != this && canvas->isCanvasNavigationActive())
+                canvas->toggleCanvasNavigation();
+        }
+        endNavigatorSessionIfIdle();
+        SpatialOverview::Navigator::noteFocus(window, true);
+        ensureCanvasKeyboardFocus(window);
+    }
+    markBlurDirty();
+    noteCanvasLayoutChanged();
+    damage();
+    return true;
+}
+
+void CScrollOverview::focusCanvasClick(PHLWINDOW window) {
+    if (!shouldShowOverviewWindow(window))
+        return;
+    size_t workspaceIdx = viewportCurrentWorkspace;
+    for (size_t i = 0; i < images.size(); ++i)
+        if (images[i] && images[i]->pWorkspace == window->m_workspace) {
+            workspaceIdx = i;
+            break;
+        }
+    Desktop::windowState()->raise(window);
+    selectOverviewWindow(window, workspaceIdx, true);
+    SpatialOverview::Navigator::selectWindow(window);
+    ensureCanvasKeyboardFocus(window);
+    damage();
+}
+
 void CScrollOverview::landOnWindow(PHLWINDOW window) {
     const auto MONITOR = pMonitor.lock();
     window             = getOverviewWindowToShow(window);
@@ -9700,6 +9917,12 @@ void CScrollOverview::landOnWindow(PHLWINDOW window) {
     if (!shouldShowOverviewWindow(window) || window->m_pinned) {
         if (canvasNavigationActive)
             toggleCanvasNavigation();
+        return;
+    }
+
+    if (ScrollOverview::Config::getCanvasGroups() && SpatialOverview::CanvasGroups::bounds(window)) {
+        focusCanvasClick(window);
+        frameCanvasGroup(window, true);
         return;
     }
 
@@ -10085,6 +10308,12 @@ bool CScrollOverview::navigatorKeyAction(uint32_t keysym, uint32_t mods, const s
     if (STATE.tuner)
         return tunerKeyAction(keysym, mods, text);
 
+    if (ScrollOverview::Config::getCanvasGroups() && CTRL && !ALT && !(mods & HL_MODIFIER_META) && (keysym == XKB_KEY_g || keysym == XKB_KEY_G)) {
+        if (!repeat)
+            flightDeckAction(SHIFT ? "ungroup" : "group");
+        return true;
+    }
+
     // Alt reaches the experiment lab's single-key actions, which plain keys
     // can no longer carry while every letter types into the search.
     if (ALT && !CTRL)
@@ -10117,6 +10346,11 @@ bool CScrollOverview::navigatorKeyAction(uint32_t keysym, uint32_t mods, const s
             if (STATE.helpOpen) {
                 STATE.helpOpen = false;
                 Navigator::touch();
+                damage();
+                return true;
+            }
+            if (ScrollOverview::Config::getCanvasGroups() && !SpatialOverview::CanvasGroups::selection.empty()) {
+                SpatialOverview::CanvasGroups::selection.clear();
                 damage();
                 return true;
             }
@@ -10618,6 +10852,20 @@ void CScrollOverview::renderNavigatorWindowOverlay(PHLMONITOR monitor, PHLWINDOW
         g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(border));
     }
 
+    if (ScrollOverview::Config::getCanvasGroups() &&
+        (SpatialOverview::CanvasGroups::contains(SpatialOverview::CanvasGroups::selection, window) || !SpatialOverview::CanvasGroups::members(window).empty())) {
+        const bool                      PICKED = SpatialOverview::CanvasGroups::contains(SpatialOverview::CanvasGroups::selection, window);
+        CBorderPassElement::SBorderData border;
+        border.box           = windowBox.copy().expand(3.F * SCALE).round();
+        border.grad1         = Config::CGradientValueData{THEME.accent};
+        border.a             = (PICKED ? 1.F : 0.55F) * FADE;
+        border.borderSize    = std::max(1, sc<int>((PICKED ? 3.F : 2.F) * SCALE));
+        border.round         = ROUNDING + border.borderSize;
+        border.outerRound    = border.round;
+        border.roundingPower = 2.F;
+        g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(border));
+    }
+
     if (HOVERED && !FOCUSED) {
         CBorderPassElement::SBorderData border;
         border.box           = windowBox.copy().expand(2.F * SCALE).round();
@@ -10776,6 +11024,29 @@ bool CScrollOverview::canvasRedo() {
 bool CScrollOverview::flightDeckAction(const std::string& action) {
     if (!isCanvasDesktop() || closing || !pMonitor) return false;
     const auto m = pMonitor.lock();
+    if (action == "select" || action == "clear-selection" || action == "group" || action == "ungroup" || action == "frame-group") {
+        if (!ScrollOverview::Config::getCanvasGroups())
+            return false;
+        namespace Groups  = SpatialOverview::CanvasGroups;
+        const auto window = getOverviewWindowToShow(Desktop::focusState()->window());
+        if (action == "select")
+            Groups::toggle(window);
+        else if (action == "clear-selection")
+            Groups::selection.clear();
+        else if (action == "group") {
+            if (!createCanvasGroup()) {
+                SpatialOverview::Navigator::showNotice("Select at least two floating windows with Ctrl-click");
+                damage();
+                return false;
+            }
+        } else if (action == "ungroup") {
+            Groups::dissolve(window);
+            SpatialOverview::Navigator::showNotice("Ungrouped; window positions kept");
+        } else if (action == "frame-group")
+            return frameCanvasGroup(window, false);
+        damage();
+        return true;
+    }
     if (action == "back") {
         if (SpatialOverview::Experiments::on(ECanvasExperiment::Landing) || SpatialOverview::Experiments::on(ECanvasExperiment::AltTab)) {
             revertNavigation();

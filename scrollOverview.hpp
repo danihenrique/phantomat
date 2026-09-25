@@ -71,6 +71,10 @@ class CScrollOverview : public IOverview {
     bool         navigatorKeyAction(uint32_t keysym, uint32_t mods, const std::string& text, bool repeat);
     bool         openNavigator(const std::string& query = {});
     void         landOnWindow(PHLWINDOW window);
+    void               focusCanvasClick(PHLWINDOW window);
+    bool               frameCanvasGroup(PHLWINDOW window, bool land);
+    bool               createCanvasGroup();
+    void               translateGroupDrag(const Vector2D& delta);
     void         summonWindow(PHLWINDOW window);
     void         revertAllNavigation();
     void         fitAllWindows();
@@ -312,6 +316,7 @@ class CScrollOverview : public IOverview {
     PHLWINDOWREF                     resizePendingWindow;
     PHLWINDOWREF                     resizeActiveWindow;
 
+    std::vector<std::pair<PHLWINDOWREF, CBox>>    groupDragMembers;
     Vector2D                         dragStartMouseLocal   = Vector2D{};
     Vector2D                         dragGrabOffsetLocal   = Vector2D{};
     Vector2D                         dragGrabRatio         = Vector2D{0.5, 0.5};

@@ -373,10 +373,20 @@ namespace SpatialOverview::Hud {
                                                    {"↵", "Go to window"}, {"⇧↵", "Bring it here"}, {"Esc", "Clear, then back"}}};
             static const SHelpSection PLACES{"Places", {{"Super 1-0", "Go to a place"}, {"Super ⇥ ⇧⇥", "Next / prev place"},
                                                        {"Super ⇧ 1-0", "Take window along"}, {"Super ⇧ Alt 1-0", "Send window there"}}};
-            static const SHelpSection MOUSE{"Mouse", {{"Click", "Go to window"}, {"Drag", "Move or pan"}, {"Wheel", "Zoom"}, {"Minimap", "Jump"}}};
-            static const std::vector<SHelpSection> WITHPLACES{FIND, PLACES, MOUSE};
-            static const std::vector<SHelpSection> WITHOUT{FIND, MOUSE};
-            return ScrollOverview::Config::getCanvasPlaces() ? WITHPLACES : WITHOUT;
+            const SHelpSection               MOUSE{"Mouse",
+                                                   {{"Click", ScrollOverview::Config::getNavigatorClickToFocus() ? "Focus, keep view" : "Go to window"},
+                                                    {"Drag", "Move or pan"},
+                                                    {"Wheel", "Zoom"},
+                                                    {"Minimap", "Jump"}}};
+            static std::vector<SHelpSection> sections;
+            sections = {FIND};
+            if (ScrollOverview::Config::getCanvasPlaces())
+                sections.push_back(PLACES);
+            sections.push_back(MOUSE);
+            if (ScrollOverview::Config::getCanvasGroups())
+                sections.push_back(
+                    {"Groups", {{"Ctrl-click", "Select / deselect"}, {"Ctrl+G", "Group and frame"}, {"Ctrl+Shift+G", "Ungroup"}, {"Shift-drag", "Move one member"}}});
+            return sections;
         }
 
         const std::vector<SHelpSection>& helpRight() {

@@ -70,11 +70,15 @@ SDispatcher* findDispatcher(const std::string_view name) {
             .luaFunction     = [](lua_State* L) { return dispatcherFactoryLua(L, "window"); },
         },
         {
-            .name            = "canvas",
-            .argPattern      = std::regex{R"(^((place|viewport)[ \t]+-?[0-9]+[ \t]+-?[0-9]+|area[ \t]+[1-9][0-9]*|send[ \t]+[1-9][0-9]*([ \t]+stay)?|go[ \t]+([1-9][0-9]*|next|prev|back)|refresh|arrange|land|back|frame|undo|redo|fit|summon|tune|fill|pin|noop|search([ \t]+[^"\\]+)?|zoom[ \t]+(in|out)|(pan|nudge)[ \t]+(left|right|up|down)|native|maximize|fullscreen|restore|experiment[ \t]+(baseline|landing|labels|alttab|areas|quiet|persist|depth|lens|all|next|prev|status)|alttab[ \t]+(next|prev)|switch[ \t]+(next|prev))$)"},
+            .name = "canvas",
+            .argPattern =
+                std::regex{
+                    R"(^((place|viewport)[ \t]+-?[0-9]+[ \t]+-?[0-9]+|area[ \t]+[1-9][0-9]*|send[ \t]+[1-9][0-9]*([ \t]+stay)?|go[ \t]+([1-9][0-9]*|next|prev|back)|select|clear-selection|group|ungroup|frame-group|refresh|arrange|land|back|frame|undo|redo|fit|summon|tune|fill|pin|noop|search([ \t]+[^"\\]+)?|zoom[ \t]+(in|out)|(pan|nudge)[ \t]+(left|right|up|down)|native|maximize|fullscreen|restore|experiment[ \t]+(baseline|landing|labels|alttab|areas|quiet|persist|depth|lens|all|next|prev|status)|alttab[ \t]+(next|prev)|switch[ \t]+(next|prev))$)"},
             .typeArgError    = "expected a string argument",
-            .invalidArgError = "expected: search [text] | tune | fill | pin | noop | fit | summon | zoom in|out | pan/nudge left|right|up|down | undo | redo | arrange | land | back | frame | place <column> <row> | viewport <x> <y> | area <id> | go <place>|next|prev|back | send <place> [stay] | refresh | native | maximize | fullscreen | restore | experiment <name> | alttab next|prev | switch next|prev",
-            .luaFunction     = [](lua_State* L) { return dispatcherFactoryLua(L, "canvas"); },
+            .invalidArgError = "expected: search [text] | tune | fill | pin | noop | fit | summon | zoom in|out | pan/nudge left|right|up|down | undo | redo | arrange | land | "
+                               "back | frame | place <column> <row> | viewport <x> <y> | area <id> | go <place>|next|prev|back | send <place> [stay] | refresh | native | maximize "
+                               "| fullscreen | restore | experiment <name> | alttab next|prev | switch next|prev",
+            .luaFunction = [](lua_State* L) { return dispatcherFactoryLua(L, "canvas"); },
         },
     };
 
@@ -360,6 +364,12 @@ static void registerConfigValues() {
                                   makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_rows", "number of vertical focus regions", 1, SIntValueOptions{.min = 1, .max = 8}));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CIntValue>("plugin:spatialoverview:canvas:focus_row", "preferred focus region, -1 follows spatial position, otherwise zero-based", 0, SIntValueOptions{.min = -1, .max = 7}));
+    HyprlandAPI::addConfigValueV2(
+        SCROLLOVERVIEW_HANDLE,
+        makeShared<CBoolValue>("plugin:spatialoverview:input:background_right_click", "open navigator with an unmodified right click on desktop background", false));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CBoolValue>("plugin:spatialoverview:navigator:click_to_focus", "primary click focuses a window without leaving the overview", false));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE, makeShared<CBoolValue>("plugin:spatialoverview:canvas:groups", "enable canvas multi-selection and spatial groups", false));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:places", "workspace keys go to places on the canvas (experimental); off, they do nothing on the canvas", false));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
@@ -670,6 +680,16 @@ int getCanvasFocusRows() {
 }
 int getCanvasFocusRow() {
     return std::clamp(getValue<int>("plugin:spatialoverview:canvas:focus_row"), -1, getCanvasFocusRows() - 1);
+}
+
+bool getBackgroundRightClick() {
+    return getValue<bool>("plugin:spatialoverview:input:background_right_click");
+}
+bool getNavigatorClickToFocus() {
+    return getValue<bool>("plugin:spatialoverview:navigator:click_to_focus");
+}
+bool getCanvasGroups() {
+    return getValue<bool>("plugin:spatialoverview:canvas:groups");
 }
 
 bool getCanvasPersistent() {

@@ -1,6 +1,7 @@
 #define WLR_USE_UNSTABLE
 
 #include <unistd.h>
+#include <linux/input-event-codes.h>
 #include <sstream>
 
 #include <hyprland/src/Compositor.hpp>
@@ -32,6 +33,7 @@ using namespace Hyprutils::String;
 #include "Experiments.hpp"
 #include "Hud.hpp"
 #include "Navigator.hpp"
+#include "CanvasGroups.hpp"
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "OverviewGesture.hpp"
 
@@ -70,6 +72,8 @@ typedef void (*origDrawTex)(void*, WP<CTexPassElement>, const CRegion&);
 typedef void (*origElementDrawTex)(void*, WP<CTexPassElement>, const CRegion&);
 
 static bool g_unloading = false;
+static wl_event_source* g_backgroundOpenIdle = nullptr;
+bool                    canvasNativeBackgroundAtCursor();
 
 // Do NOT change this function.
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -638,9 +642,9 @@ static SDispatchResult onCanvasDispatcher(std::string arg) {
                                                                                                                                 : SDispatchResult{.success = false, .error = "Open the canvas before using this action"};
     if (!CANVAS)
         return arg == "refresh" ? SDispatchResult{} : SDispatchResult{.success = false, .error = "Open the canvas before using this action"};
-    if (arg == "back" || arg == "land" || arg == "frame" || arg == "undo" || arg == "redo" || arg == "fit" || arg == "summon" || arg == "search" || arg == "tune" ||
-        arg.starts_with("search ") || arg.starts_with("zoom ") || arg.starts_with("pan ") || arg.starts_with("nudge ") || arg.starts_with("area ") || arg.starts_with("go ") ||
-        arg.starts_with("send "))
+    if (arg == "select" || arg == "clear-selection" || arg == "group" || arg == "ungroup" || arg == "frame-group" || arg == "back" || arg == "land" || arg == "frame" ||
+        arg == "undo" || arg == "redo" || arg == "fit" || arg == "summon" || arg == "search" || arg == "tune" || arg.starts_with("search ") || arg.starts_with("zoom ") ||
+        arg.starts_with("pan ") || arg.starts_with("nudge ") || arg.starts_with("area ") || arg.starts_with("go ") || arg.starts_with("send "))
         return CANVAS->flightDeckAction(arg) ? SDispatchResult{} : SDispatchResult{.success = false, .error = "No matching window, area or undo state"};
 
     std::istringstream stream{arg};
@@ -933,6 +937,31 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             info.cancelled = true;
     });
 
+    static bool backgroundRightDown = false;
+    static auto BACKGROUNDBUTTON    = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
+        if (g_unloading || event.button != BTN_RIGHT)
+            return;
+        if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && backgroundRightDown) {
+            backgroundRightDown = false;
+            info.cancelled      = true;
+            if (!g_backgroundOpenIdle && ScrollOverview::Config::getBackgroundRightClick() && canvasNativeBackgroundAtCursor())
+                g_backgroundOpenIdle = wl_event_loop_add_idle(
+                    g_pCompositor->m_wlEventLoop,
+                    [](void*) {
+                        g_backgroundOpenIdle = nullptr;
+                        if (!g_unloading && canvasNativeBackgroundAtCursor())
+                            onOverviewDispatcher("toggle all");
+                    },
+                    nullptr);
+            return;
+        }
+        if (!info.cancelled && ScrollOverview::Config::getBackgroundRightClick() && ScrollOverview::Config::getCanvasDesktopMode() && !g_pInputManager->getModsFromAllKBs() &&
+            event.state == WL_POINTER_BUTTON_STATE_PRESSED && canvasNativeBackgroundAtCursor()) {
+            backgroundRightDown = true;
+            info.cancelled      = true;
+        }
+    });
+
     // Recency for the navigator is tracked for the whole session, not only
     // while the canvas is open, so "recent first" means what it says.
     static auto NAVIGATORFOCUS = Event::bus()->m_events.window.active.listen([](PHLWINDOW window, Desktop::eFocusReason) { SpatialOverview::Navigator::noteFocus(window); });
@@ -959,6 +988,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    if (g_backgroundOpenIdle)
+        wl_event_source_remove(g_backgroundOpenIdle);
+    g_backgroundOpenIdle = nullptr;
     if (g_flightDeckIdle) wl_event_source_remove(g_flightDeckIdle);
     g_flightDeckIdle = nullptr;
     g_flightDeckRequest.reset();
@@ -976,6 +1008,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
     disarmCanvasTimers();
     SpatialOverview::Navigator::shutdown();
+    SpatialOverview::CanvasGroups::clear();
     if (const auto OPENGL = g_pHyprRenderer ? g_pHyprRenderer->glBackend() : WP<Render::GL::CHyprOpenGLImpl>{})
         OPENGL->makeEGLCurrent();
     SpatialOverview::BarrelShader::discardPendingHud();

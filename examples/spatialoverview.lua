@@ -40,6 +40,7 @@ hl.config({
       -- Input. Middle-drag pans the world; click selects; dragging into empty
       -- grid territory places a floating window without creating a workspace.
       input = {
+        background_right_click = false, -- opt-in desktop background shortcut
         pan_sensitivity = 1.0,
         drag_threshold = 10,
         touchpad_scroll_factor = 1.0,
@@ -80,6 +81,7 @@ hl.config({
       },
 
       canvas = {
+        groups = false, -- Ctrl-click selection; Ctrl+G / Ctrl+Shift+G group / ungroup
         enabled = true,
         desktop_mode = true,
         persistent = true,
@@ -123,6 +125,7 @@ hl.config({
 
       -- Type-to-search palette in the zoomed-out canvas.
       navigator = {
+        click_to_focus = false, -- true: focus on click, keep overview; Enter still lands
         enabled = true,
         labels = true,          -- window titles on the map
         dim_unmatched = 0.7,    -- how far non-matching windows recede (0..1)
