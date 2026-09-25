@@ -1611,6 +1611,21 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
         const float    DRAGTHRESHOLDSQ       = std::pow(DRAGTHRESHOLD, 2);
 
         lastMousePosLocal = getOverviewMousePosLocal(pMonitor.lock());
+        if (backgroundPanDown) {
+            info.cancelled = true;
+            if (!canvasNavigationActive)
+                return;
+            if (!backgroundPanMoved && backgroundPanStart.distanceSq(lastMousePosLocal) > DRAGTHRESHOLDSQ) {
+                backgroundPanMoved = true;
+                beginScrollingPan({});
+                scrollingPanLastMouseLocal = backgroundPanStart;
+            }
+            if (backgroundPanMoved)
+                updateScrollingPan();
+            requestInputFrame();
+            return;
+        }
+
         if (landingDrag) {
             info.cancelled = true;
             updateExperimentDrag();
@@ -1754,6 +1769,18 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 g_pointerGrabOverview = nullptr;
         });
 
+        if (event.button == BTN_RIGHT && event.state == WL_POINTER_BUTTON_STATE_RELEASED && backgroundPanDown) {
+            info.cancelled = true;
+            backgroundPanDown = false;
+            if (backgroundPanMoved)
+                endScrollingPan();
+            else if (backgroundPanCloseOnClick && canvasNavigationActive)
+                revertAllNavigation();
+            backgroundPanMoved = false;
+            requestInputFrame();
+            return;
+        }
+
         // A camera jump can put the pointer over a panel or another surface.
         // Always consume the release paired with our intercepted press.
         if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && navigatorSwallowedButtons.erase(event.button)) {
@@ -1836,12 +1863,11 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 event.state == WL_POINTER_BUTTON_STATE_PRESSED && !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !scrollingPanPointerDown &&
                 !clientGestureButton && !windowAtOverviewCursor() && (canvasNavigationActive || !canvasForwardedPointerSurface) &&
                 (!showsNavigatorHud() || SpatialOverview::Hud::paletteHit(RAWLOCAL) == SpatialOverview::Hud::PALETTE_MISS) && canvasBackgroundLayersClear(pMonitor.lock())) {
-                navigatorSwallowedButtons.emplace(event.button);
                 info.cancelled = true;
-                if (canvasNavigationActive)
-                    revertAllNavigation();
-                else
+                const bool WASNAVIGATING = canvasNavigationActive;
+                if (!WASNAVIGATING)
                     openNavigator();
+                beginBackgroundPan(WASNAVIGATING);
                 requestInputFrame();
                 return;
             }
@@ -5757,6 +5783,17 @@ void CScrollOverview::updateScrollingPan() {
         markBlurDirty();
         damage();
     }
+}
+
+void CScrollOverview::beginBackgroundPan(bool closeOnClick) {
+    if (!isCanvasDesktop() || !canvasNavigationActive || closing)
+        return;
+    lastMousePosLocal = getOverviewMousePosLocal(pMonitor.lock());
+    backgroundPanStart = lastMousePosLocal;
+    backgroundPanDown = true;
+    backgroundPanMoved = false;
+    backgroundPanCloseOnClick = closeOnClick;
+    g_pointerGrabOverview = this;
 }
 
 void CScrollOverview::beginScrollingPan(PHLWORKSPACE workspace) {

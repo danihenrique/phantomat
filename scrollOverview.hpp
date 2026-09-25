@@ -71,6 +71,7 @@ class CScrollOverview : public IOverview {
     bool         navigatorKeyAction(uint32_t keysym, uint32_t mods, const std::string& text, bool repeat);
     bool         openNavigator(const std::string& query = {});
     void         landOnWindow(PHLWINDOW window);
+    void         beginBackgroundPan(bool closeOnClick);
     void               focusCanvasClick(PHLWINDOW window);
     bool               frameCanvasGroup(PHLWINDOW window, bool land);
     bool               createCanvasGroup();
@@ -336,6 +337,10 @@ class CScrollOverview : public IOverview {
     Layout::eRectCorner              resizeCorner           = Layout::CORNER_NONE;
     bool                             dragPendingPrimary    = false;
     bool                             resizePointerDown     = false;
+    bool                             backgroundPanDown = false;
+    bool                             backgroundPanMoved = false;
+    bool                             backgroundPanCloseOnClick = false;
+    Vector2D                         backgroundPanStart{};
     bool                             scrollingPanPointerDown = false;
     bool                             submapMouseClickPending = false;
     bool                             dragStartedTiled      = false;

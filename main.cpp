@@ -15,6 +15,7 @@
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/render/ElementRenderer.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -943,22 +944,32 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             return;
         if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && backgroundRightDown) {
             backgroundRightDown = false;
-            info.cancelled      = true;
-            if (!g_backgroundOpenIdle && ScrollOverview::Config::getBackgroundRightClick() && canvasNativeBackgroundAtCursor())
-                g_backgroundOpenIdle = wl_event_loop_add_idle(
-                    g_pCompositor->m_wlEventLoop,
-                    [](void*) {
-                        g_backgroundOpenIdle = nullptr;
-                        if (!g_unloading && canvasNativeBackgroundAtCursor())
-                            onOverviewDispatcher("toggle all");
-                    },
-                    nullptr);
+            info.cancelled = true;
             return;
         }
         if (!info.cancelled && ScrollOverview::Config::getBackgroundRightClick() && ScrollOverview::Config::getCanvasDesktopMode() && !g_pInputManager->getModsFromAllKBs() &&
             event.state == WL_POINTER_BUTTON_STATE_PRESSED && canvasNativeBackgroundAtCursor()) {
             backgroundRightDown = true;
-            info.cancelled      = true;
+            info.cancelled = true;
+            // Create listeners after this event dispatch, but open on press so
+            // the same held button can immediately pan the new canvas.
+            if (!g_backgroundOpenIdle)
+                g_backgroundOpenIdle = wl_event_loop_add_idle(
+                    g_pCompositor->m_wlEventLoop,
+                    [](void*) {
+                        g_backgroundOpenIdle = nullptr;
+                        if (g_unloading || (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()))
+                            return;
+                        onOverviewDispatcher("toggle all");
+                        if (backgroundRightDown) {
+                            const auto overview = scrollOverviewAt(g_pInputManager->getMouseCoordsInternal());
+                            if (auto* canvas = dynamic_cast<CScrollOverview*>(overview.get()); canvas && canvas->isCanvasNavigationActive()) {
+                                canvas->beginBackgroundPan(false);
+                                backgroundRightDown = false; // release now belongs to the canvas
+                            }
+                        }
+                    },
+                    nullptr);
         }
     });
 

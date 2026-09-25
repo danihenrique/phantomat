@@ -52,6 +52,24 @@ def drag(title,modifier=None):
     if p: p.wait(timeout=5)
     time.sleep(.7)
 
+def right_hold_pan():
+    mon=json.loads(n.ctl('monitors','-j'))[0]
+    # The press and drag share a virtual pointer, including the held interval.
+    p=subprocess.Popen([str(ROOT/'.build/vpointer'),str(mon['width']),str(mon['height']),
+        'abs',str(round(mon['width']*.4)),'3','rdown','sleep','1600','rel','-120','0','sleep','700','rup','sleep','100'],env=n.env())
+    try:
+        time.sleep(1.1)
+        check(screen()['navigating'], 'right press opens or keeps overview before release')
+        before=screen()['view'][0]
+        p.wait(timeout=8); time.sleep(.5)
+        check(screen()['navigating'], 'right drag release keeps overview open')
+        check(screen()['view'][0]>before+20, 'right drag left reveals canvas to the right')
+        after=screen()['view'][:]
+        mouse('rel',40,0)
+        check(screen()['view']==after, 'right release stops panning')
+    finally:
+        if p.poll() is None: p.terminate(); p.wait(timeout=5)
+
 try:
     n.launch()
     # Both options default off: a native background click does nothing.
@@ -75,9 +93,8 @@ try:
     c=client('GroupA')
     mouse('abs',c['at'][0]+50,c['at'][1]+50,'rdown','rup')
     check(not state()['screens'], 'right click on native app does not open canvas')
-    mouse('abs',3,3,'rdown','rup')
-    time.sleep(1.2)
-    check(screen()['navigating'], 'native background click opens overview')
+    right_hold_pan()
+    check(screen()['navigating'], 'native background press opens and pans overview')
     # Arrange deterministic hit targets, clear of the HUD.
     info=json.loads(n.ctl('monitors','-j'))[0]; W=info['width']; H=info['height']
     for i,title in enumerate(('GroupA','GroupB','GroupC')):
@@ -89,8 +106,9 @@ try:
     # Right click in an app must remain app input at 100%.
     click('GroupA',right=True)
     check(not screen()['navigating'], 'right click inside canvas app stays native')
-    mouse('abs',3,3,'rdown','rup'); time.sleep(1)
-    check(screen()['navigating'], 'background click reopens persistent canvas')
+    right_hold_pan()
+    check(screen()['navigating'], 'background press opens and pans persistent canvas')
+    right_hold_pan()
     mouse('abs',3,3,'rdown','rup'); time.sleep(1)
     check(not screen()['navigating'], 'background click closes persistent canvas')
     mouse('abs',3,3,'rdown','rup'); time.sleep(1)

@@ -142,7 +142,9 @@ Merge these fields into the existing tables; do not replace your other settings.
 
 - `input.background_right_click`: an unmodified physical right-click on empty
   desktop background toggles the navigator, including before the first canvas
-  session. Closing it restores the view from before entering. Application windows, layer panels, popups and the lock screen are
+  session. Hold the button and drag to pan immediately; dragging left reveals
+  windows to the right. Releasing after a drag keeps the navigator open. A short
+  right-click while navigating closes it and restores the view from before entering. Application windows, layer panels, popups and the lock screen are
   excluded. Right-clicking an app retains its normal behavior.
 - `input.ctrl_click_focus` (default `false`): outside the overview, **Ctrl+primary-click**
   focuses and frames the window or its entire spatial group, respecting focus
