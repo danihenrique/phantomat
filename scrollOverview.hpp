@@ -92,6 +92,7 @@ class CScrollOverview : public IOverview {
     void         loadSharedCanvasLayout();
     void         checkpointCanvas();
     Vector2D     navigationReturnOffset{};
+    float        navigationReturnZoom = 1.F;
     bool         hasNavigationReturn = false;
 
     void         fullRender() override;

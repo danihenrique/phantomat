@@ -91,12 +91,28 @@ try:
     check(not screen()['navigating'], 'right click inside canvas app stays native')
     mouse('abs',3,3,'rdown','rup'); time.sleep(1)
     check(screen()['navigating'], 'background click reopens persistent canvas')
+    mouse('abs',3,3,'rdown','rup'); time.sleep(1)
+    check(not screen()['navigating'], 'background click closes persistent canvas')
+    mouse('abs',3,3,'rdown','rup'); time.sleep(1)
+    check(screen()['navigating'], 'second background click opens again')
     config('navigator={click_to_focus=true},canvas={groups=true}')
     canvas('viewport 0 0'); time.sleep(.8)
     before=screen()
     click('GroupB')
     check(n.active()['title']=='GroupB' and screen()['navigating'], 'focus-only click activates window and keeps overview')
     check(screen()['view']==before['view'] and screen()['zoom']==before['zoom'], 'focus-only click does not move camera')
+    config('navigator={click_to_focus=false}')
+    click('GroupB'); time.sleep(1)
+    check(not screen()['navigating'], 'plain click opens when groups enabled')
+    mouse('abs',3,3,'rdown','rup'); canvas('viewport 0 0'); time.sleep(1)
+    click('GroupA','ctrl'); click('GroupB','ctrl'); click('GroupC','ctrl')
+    check(set(state()['selection'])=={'GroupA','GroupB','GroupC'}, 'Ctrl-click selects three windows')
+    n.keys('-M','ctrl','g','-m','ctrl'); time.sleep(1)
+    check(len(state()['groups'][0])==3, 'Ctrl+G groups all three selected windows')
+    canvas('ungroup')
+    for i,title in enumerate(('GroupA','GroupB','GroupC')):
+        move(title,W*(.1+i*.35),H*.7)
+    canvas('viewport 0 0'); time.sleep(1)
     click('GroupA','ctrl'); click('GroupB','ctrl')
     check(set(state()['selection'])=={'GroupA','GroupB'}, 'Ctrl-click selects two windows')
     click('GroupB','ctrl'); check(state()['selection']==['GroupA'], 'Ctrl-click deselects')
@@ -129,6 +145,40 @@ try:
     cx=(min(c['at'][0] for c in boxes)+max(c['at'][0]+c['size'][0] for c in boxes))/2
     cy=(min(c['at'][1] for c in boxes)+max(c['at'][1]+c['size'][1] for c in boxes))/2
     check(abs(cx-(v[0]+v[2]/2))<5 and abs(cy-(v[1]+v[3]/2))<5, 'landing centers group bounds rather than one member')
+    # Groups use the same physical focus region as single windows, at fit zoom.
+    n.dispatch('hl.dsp.window.resize({x=220,y='+str(round(H*.7))+',window="title:GroupA"})'); time.sleep(.8)
+    boxes=[client(t) for t in sizes]
+    cy=(min(c['at'][1] for c in boxes)+max(c['at'][1]+c['size'][1] for c in boxes))/2
+    config('canvas={focus_monitor='+json.dumps(info['name'])+',focus_rows=2,focus_row=0}')
+    canvas('search GroupA'); n.keys('-k','Return'); time.sleep(1)
+    s=screen(); v=s['view']; z=s['zoom']
+    check(z<1, 'large group zooms out to fit one physical panel')
+    check(abs((cy-v[1])*z-H*.25)<5, 'group lands centered on upper physical panel')
+    config('canvas={focus_row=1}')
+    canvas('search GroupA'); n.keys('-k','Return'); time.sleep(1)
+    s=screen(); v=s['view']; z=s['zoom']
+    check(abs((cy-v[1])*z-H*.75)<5, 'group lands centered on lower physical panel')
+    config('canvas={focus_row=-1}')
+    for fraction in (.25,.75):
+        s=screen(); origin=s['view'][1]
+        # Translate both members as a unit without changing their relative layout.
+        offset=origin+H*fraction/s['zoom']-cy
+        for t in sizes:
+            c=client(t); move(t,c['at'][0],c['at'][1]+offset)
+        time.sleep(.8)
+        boxes=[client(t) for t in sizes]
+        cy=(min(c['at'][1] for c in boxes)+max(c['at'][1]+c['size'][1] for c in boxes))/2
+        canvas('search GroupA'); time.sleep(.5); n.keys('-k','Return'); time.sleep(1)
+        s=screen(); v=s['view']; z=s['zoom']
+        check(abs((cy-v[1])*z-H*fraction)<5, 'group spatial landing at '+str(fraction))
+        check(all((c['at'][1]-v[1])*z>=H*(0 if fraction<.5 else .5)-2 and
+                  (c['at'][1]+c['size'][1]-v[1])*z<=H*(.5 if fraction<.5 else 1)+2 for c in boxes), 'entire group fits chosen panel')
+    before=screen()
+    mouse('abs',3,3,'rdown','rup'); time.sleep(1)
+    mouse('abs',3,3,'rdown','rup'); time.sleep(1)
+    check(not screen()['navigating'] and abs(screen()['zoom']-before['zoom'])<.01, 'background toggle restores group fit zoom')
+    check(all(abs(a-b)<5 for a,b in zip(screen()['view'],before['view'])), 'background toggle restores group camera')
+    config('canvas={focus_rows=1,focus_row=0}')
     n.dispatch('hl.dsp.window.fullscreen({mode="fullscreen"})'); time.sleep(1.2)
     check(len(state()['groups'])==1, 'fullscreen preserves spatial group membership')
     n.dispatch('hl.dsp.window.fullscreen({mode="fullscreen"})'); time.sleep(1.2)
@@ -140,6 +190,15 @@ try:
     canvas('search GroupA'); time.sleep(.5)
     n.keys('-M','ctrl','-M','shift','g','-m','shift','-m','ctrl')
     check(not state()['groups'], 'Ctrl+Shift+G dissolves group')
+    # Selecting a member and a new app must extend, not split, the old group.
+    for t in ('GroupA','GroupB'):
+        focus(t); canvas('select')
+    canvas('group')
+    for t in ('GroupB','GroupC'):
+        focus(t); canvas('select')
+    canvas('group')
+    check(len(state()['groups'])==1 and set(state()['groups'][0])=={'GroupA','GroupB','GroupC'}, 'adding third app keeps both existing members')
+    canvas('ungroup')
     # Recreate then close a member: no stale group or dangling reference.
     for t in ('GroupA','GroupB'):
         focus(t); canvas('select')

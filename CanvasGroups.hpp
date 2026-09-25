@@ -45,15 +45,26 @@ namespace SpatialOverview::CanvasGroups {
         else
             selection.emplace_back(w);
     }
-    inline bool create() {
+    // Adding a selected window to an existing group merges the whole group.
+    // Use the same member set for layout and membership, without duplicates.
+    inline Members groupingMembers() {
         prune();
-        if (selection.size() < 2 || std::ranges::any_of(selection, [](const auto& ref) { return !eligible(ref.lock()); }))
+        Members result = selection;
+        for (const auto& group : groups)
+            if (std::ranges::any_of(selection, [&](const auto& ref) { return contains(group, ref.lock()); }))
+                for (const auto& ref : group)
+                    if (!contains(result, ref.lock()))
+                        result.push_back(ref);
+        return result;
+    }
+    inline bool create() {
+        const auto picked = groupingMembers();
+        if (selection.size() < 2 || std::ranges::any_of(picked, [](const auto& ref) { return !eligible(ref.lock()); }))
             return false;
-        // Regroup only selected members; remaining pairs keep their group.
-        for (auto& group : groups)
-            std::erase_if(group, [](const auto& ref) { return contains(selection, ref.lock()); });
-        std::erase_if(groups, [](const auto& group) { return group.size() < 2; });
-        groups.push_back(selection);
+        std::erase_if(groups, [&](const auto& group) {
+            return std::ranges::any_of(picked, [&](const auto& ref) { return contains(group, ref.lock()); });
+        });
+        groups.push_back(picked);
         selection.clear();
         return true;
     }

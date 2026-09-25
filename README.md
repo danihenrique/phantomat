@@ -141,16 +141,17 @@ canvas = { groups = true },
 Merge these fields into the existing tables; do not replace your other settings.
 
 - `input.background_right_click`: an unmodified physical right-click on empty
-  desktop background opens the navigator, including before the first canvas
-  session. Application windows, layer panels, popups and the lock screen are
+  desktop background toggles the navigator, including before the first canvas
+  session. Closing it restores the view from before entering. Application windows, layer panels, popups and the lock screen are
   excluded. Right-clicking an app retains its normal behavior.
 - `navigator.click_to_focus`: primary-click a window or search result to focus
   and raise it without moving the camera or leaving the overview. **Enter**
   still lands on the focused window. The primary button respects left-handed
-  configuration.
+  configuration. Leave this option disabled for primary-click to open the window.
 - `canvas.groups`: **Ctrl+click** toggles selection of floating windows (or
   search results). **Ctrl+G** brings selected windows together in a compact
-  grid, in selection order, preserving their sizes. **Ctrl+Shift+G** dissolves
+  grid, in selection order, preserving their sizes. Selecting an existing group
+  member together with another window merges their entire groups. **Ctrl+Shift+G** dissolves
   groups containing the selection, or the focused window's group when no
   multi-selection is present. **Esc** clears multi-selection first.
 
@@ -158,7 +159,7 @@ Selected windows have a strong accent outline; grouped windows have a lighter
 one. Drag a member to move the group; **Shift+drag** moves just that member.
 Resize members independently. Landing on a member centers the bounding box of
 all members, zooming out if needed within the configured minimum zoom. Group
-framing uses the whole output rather than a single configured focus region.
+framing respects the configured focus region, including spatial row selection.
 Creating a group and moving it use the existing positional undo/redo history;
 undo restores geometry, not group membership.
 

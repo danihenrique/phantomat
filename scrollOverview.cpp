@@ -1830,12 +1830,16 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                 return;
             }
 
-            if (ScrollOverview::Config::getBackgroundRightClick() && !canvasNavigationActive && !MODS && event.button == BTN_RIGHT &&
+            if (ScrollOverview::Config::getBackgroundRightClick() && !MODS && event.button == BTN_RIGHT &&
                 event.state == WL_POINTER_BUTTON_STATE_PRESSED && !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !scrollingPanPointerDown &&
-                !clientGestureButton && !windowAtOverviewCursor() && !canvasForwardedPointerSurface && canvasBackgroundLayersClear(pMonitor.lock())) {
+                !clientGestureButton && !windowAtOverviewCursor() && (canvasNavigationActive || !canvasForwardedPointerSurface) &&
+                (!showsNavigatorHud() || SpatialOverview::Hud::paletteHit(RAWLOCAL) == SpatialOverview::Hud::PALETTE_MISS) && canvasBackgroundLayersClear(pMonitor.lock())) {
                 navigatorSwallowedButtons.emplace(event.button);
                 info.cancelled = true;
-                openNavigator();
+                if (canvasNavigationActive)
+                    revertAllNavigation();
+                else
+                    openNavigator();
                 requestInputFrame();
                 return;
             }
@@ -3516,6 +3520,7 @@ void CScrollOverview::toggleCanvasNavigation() {
     const auto CENTER = CBox{{}, MONITOR->m_size * MONITOR->m_scale}.middle();
     if (!canvasNavigationActive) {
         navigationReturnOffset = viewOffset->goal();
+        navigationReturnZoom = scale->goal();
         hasNavigationReturn = true;
         if (SpatialOverview::Experiments::on(ECanvasExperiment::Landing)) {
             landingDestinationWorld = currentCanvasViewportWorld();
@@ -9649,7 +9654,7 @@ void CScrollOverview::revertNavigation() {
     if (hasNavigationReturn) {
         *viewOffset = navigationReturnOffset;
     }
-    *scale              = 1.F;
+    *scale              = hasNavigationReturn ? navigationReturnZoom : 1.F;
     *transitionProgress = 0.F;
     leaveNavigatorPointer();
     endNavigatorSessionIfIdle();
@@ -9674,8 +9679,6 @@ Vector2D CScrollOverview::canvasCameraOffsetFor(const PHLWINDOW& window, float z
 
     const auto GROUP = ScrollOverview::Config::getCanvasGroups() ? SpatialOverview::CanvasGroups::bounds(window) : std::nullopt;
     const auto BOX   = GROUP.value_or(window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
-    if (GROUP && !navigating)
-        return BOX.middle() - MONITOR->m_position - MONITOR->m_size * 0.5F;
     auto       target = BOX.middle();
     if (navigating) {
         // Keep the selection clear of the search palette above it.
@@ -9684,8 +9687,8 @@ Vector2D CScrollOverview::canvasCameraOffsetFor(const PHLWINDOW& window, float z
     } else {
         // At 100% an oversized window keeps its top-left corner on screen,
         // where title bars, tabs and menus live.
-        if (BOX.width > MONITOR->m_size.x)
-            target.x = BOX.x + MONITOR->m_size.x * 0.5;
+        if (BOX.width * zoom > MONITOR->m_size.x)
+            target.x = BOX.x + MONITOR->m_size.x * 0.5 / zoom;
         // Some dual-panel displays expose one tall output. Focus within one
         // physical panel instead of centering on its bezel. Only the camera
         // moves; the window's world position and the overview stay unchanged.
@@ -9695,14 +9698,15 @@ Vector2D CScrollOverview::canvasCameraOffsetFor(const PHLWINDOW& window, float z
         if (ROW < 0) {
             // Use the desktop before opening search, not the zoomed-out view.
             const Vector2D ORIGIN = MONITOR->m_position + (canvasNavigationActive && hasNavigationReturn ? navigationReturnOffset : viewOffset->value());
-            const double LOCALY = BOX.middle().y - ORIGIN.y;
+            const float RETURNZOOM = std::max(0.01F, canvasNavigationActive && hasNavigationReturn ? navigationReturnZoom : scale->value());
+            const double LOCALY = (BOX.middle().y - ORIGIN.y - MONITOR->m_size.y * 0.5) * RETURNZOOM + MONITOR->m_size.y * 0.5;
             // Preserve spatial direction, including windows beyond the viewport.
             // Above the screen lands on the top panel; below lands on the bottom.
             ROW = static_cast<int>(std::clamp(std::floor(LOCALY / HEIGHT), 0.0, static_cast<double>(ROWS - 1)));
         }
-        if (BOX.height > HEIGHT)
-            target.y = BOX.y + HEIGHT * 0.5;
-        target.y += MONITOR->m_size.y * 0.5 - (ROW + 0.5) * HEIGHT;
+        if (BOX.height * zoom > HEIGHT)
+            target.y = BOX.y + HEIGHT * 0.5 / zoom;
+        target.y += (MONITOR->m_size.y * 0.5 - (ROW + 0.5) * HEIGHT) / zoom;
     }
     return target - MONITOR->m_position - MONITOR->m_size * 0.5F;
 }
@@ -9817,9 +9821,9 @@ void CScrollOverview::finishSwitcher(bool cancel) {
 bool CScrollOverview::createCanvasGroup() {
     namespace Groups = SpatialOverview::CanvasGroups;
     Groups::prune();
-    const auto picked  = Groups::selection;
+    const auto picked  = Groups::groupingMembers();
     const auto MONITOR = pMonitor.lock();
-    if (!MONITOR || picked.size() < 2)
+    if (!MONITOR || Groups::selection.size() < 2)
         return false;
     for (const auto& ref : picked)
         if (!SpatialOverview::CanvasGroups::eligible(ref.lock()) || !ref.lock()->layoutTarget())
@@ -9864,12 +9868,13 @@ bool CScrollOverview::frameCanvasGroup(PHLWINDOW window, bool land) {
         return false;
     if (!land && !canvasNavigationActive)
         toggleCanvasNavigation();
-    const double usableHeight = MONITOR->m_size.y * (land ? 0.9 : 0.7);
+    const int rows = land && MONITOR->m_name == ScrollOverview::Config::getCanvasFocusMonitor() ? ScrollOverview::Config::getCanvasFocusRows() : 1;
+    const double usableHeight = MONITOR->m_size.y / rows * (land ? 0.9 : 0.7);
     const float  zoom   = std::clamp<float>(std::min(MONITOR->m_size.x * 0.9 / bounds->width, usableHeight / bounds->height), std::min(ScrollOverview::Config::getCanvasMinZoom(), 1.F), 1.F);
     auto         center = bounds->middle();
     if (!land && showsNavigatorHud())
         center.y -= (SpatialOverview::Hud::selectionFocusY(MONITOR->m_size) - MONITOR->m_size.y * 0.5) / zoom;
-    *viewOffset = center - MONITOR->m_position - MONITOR->m_size * 0.5;
+    *viewOffset = land ? canvasCameraOffsetFor(window, zoom, false) : center - MONITOR->m_position - MONITOR->m_size * 0.5;
     *scale      = zoom;
     if (land) {
         canvasNavigationActive = false;
