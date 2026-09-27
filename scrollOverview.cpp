@@ -8045,6 +8045,8 @@ void CScrollOverview::renderChromeLayers(PHLMONITOR monitor, const Time::steady_
     const auto  BOTTOMNS = ScrollOverview::Config::getChromeBottomNamespace();
     const float FULLHEIGHT = monitor->m_size.y * monitor->m_scale;
 
+    // Layer-shell popups are a separate renderer pass (e.g. tray menus).
+    // Keep them under the same chrome transform and alpha as their owner.
     for (const auto LAYER : {ZWLR_LAYER_SHELL_V1_LAYER_TOP, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY}) {
         for (auto const& ls : monitor->m_layerSurfaceLayers[LAYER]) {
             const auto SURFACE = ls.lock();
@@ -8055,6 +8057,7 @@ void CScrollOverview::renderChromeLayers(PHLMONITOR monitor, const Time::steady_
             const bool ISBOTTOM = !BOTTOMNS.empty() && SURFACE->m_namespace == BOTTOMNS;
             if (!ANIMATE || PROGRESS <= 0.001F || (!ISTOP && !ISBOTTOM)) {
                 g_pHyprRenderer->renderLayer(SURFACE, monitor, now);
+                g_pHyprRenderer->renderLayer(SURFACE, monitor, now, true);
                 continue;
             }
 
@@ -8075,6 +8078,7 @@ void CScrollOverview::renderChromeLayers(PHLMONITOR monitor, const Time::steady_
             const float TARGETALPHA   = ScrollOverview::Config::getChromeOpacity();
             ALPHA->setValueAndWarp(PREVIOUSALPHA * (1.F + (TARGETALPHA - 1.F) * PROGRESS));
             g_pHyprRenderer->renderLayer(SURFACE, monitor, now);
+            g_pHyprRenderer->renderLayer(SURFACE, monitor, now, true);
             ALPHA->setValueAndWarp(PREVIOUSALPHA);
 
             g_pHyprRenderer->m_renderPass.add(
