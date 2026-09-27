@@ -1,10 +1,10 @@
 [repository]
 name = "phantomat"
-authors = ["kaolti", "yayuuu", "Vaxry"]
+authors = ["danihenrique", "kaolti", "yayuuu", "Vaxry"]
 
 [spatialoverview]
-description = "Phantomat: a zoomable, infinite-canvas window manager for Hyprland."
-authors = ["kaolti", "yayuuu", "Vaxry"]
+description = "Phantomat (danihenrique personal fork): a zoomable, infinite-canvas window manager for Hyprland."
+authors = ["danihenrique", "kaolti", "yayuuu", "Vaxry"]
 output = "spatialoverview.so"
 build = [
     "make all",

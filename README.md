@@ -1,4 +1,10 @@
-# Phantomat
+# Phantomat — Daniel Henrique’s personal fork
+
+Maintained by [Daniel Henrique (@danihenrique)](https://github.com/danihenrique).
+This is a customized fork of [kaolti/phantomat](https://github.com/kaolti/phantomat),
+used as a daily desktop on Omarchy. The original history, credits and BSD 3-Clause
+license are preserved. This fork is independently maintained and is not an
+official release of the upstream project.
 
 A zoomable, infinite-canvas window manager for Hyprland. Every window lives
 on one endless plane instead of in workspaces. Press a key and the view pulls
@@ -13,6 +19,86 @@ is a machine that builds a whole world around the person inside it.
 Made on [Omarchy](https://omarchy.org) with Hyprland 0.56. Built on
 [hyprland-scroll-overview](https://github.com/yayuuu/hyprland-scroll-overview)
 by yayuuu (see [Credits](#credits)).
+
+## What this fork adds
+
+The fork starts from upstream commit
+[`2e33ec1`](https://github.com/kaolti/phantomat/commit/2e33ec12e9d0a7699c61307c1e04909badb75e75).
+The custom work focuses on mouse interaction, spatial groups, persistence and
+multi-display focus. The canvas, lens, search, keyboard navigation, live tuner
+and application support described below come from the original Phantomat.
+
+| Customization | Behavior |
+| --- | --- |
+| **Resize from any edge or corner** | Drag a border with the primary mouse button, without a modifier. Sides resize one axis; corners resize both. Directional cursors show the grab area. Works at normal size and while zoomed out, without a separate Omarchy shell plugin. The original right-button resize remains available. |
+| **Background right-click navigation** | Right-click empty desktop to open or close the navigator. Hold and drag to open and pan in one gesture; releasing after a drag keeps the overview open. |
+| **Spatial window groups** | Ctrl+click selects members; Ctrl+G packs them together without resizing them. Move a group by dragging any member, or Shift+drag to adjust one member. Group framing fits the whole group into view. |
+| **Focus without leaving the overview** | An optional primary-click mode focuses and raises a window or search result while preserving the camera. Enter still lands on it. |
+| **Ctrl+click framing** | Outside the overview, an optional Ctrl+click frames a window or its whole group. |
+| **Left+right button chord** | Outside the overview, pressing both buttons together can frame a window or group. The overlap timeout is configurable; ordinary clicks are forwarded when the chord does not complete. |
+| **Persistent groups and cameras** | Save window geometry, group membership, per-screen camera, zoom and navigation state together. Plugin updates flush and restore the layout without repacking groups. |
+| **Vertical focus regions** | Divide a selected output into vertical regions for stacked physical panels. Focus can target a fixed row or follow the window’s spatial position. Hardware-specific output names stay in user configuration. |
+| **Shell popup rendering** | Layer-shell popups, such as tray menus, are rendered with their panel’s canvas transform and opacity. |
+
+New interaction options default to **off** so users can choose the gestures they
+want. To enable this fork’s mouse and group features, merge these fields into
+the existing `plugin.spatialoverview` tables in
+`~/.config/hypr/spatialoverview.lua`:
+
+```lua
+input = {
+  background_right_click = true,
+  ctrl_click_focus = true,
+  button_chord_focus = true,
+  button_chord_timeout = 120,
+},
+canvas = {
+  border_resize = true,
+  groups = true,
+  remember_layout = true,
+},
+```
+
+For focus-only clicks in the overview, also set
+`navigator.click_to_focus = true`. Leave it off if clicking should fly into the
+window. Do not replace your existing tables wholesale: retain the other canvas,
+input and navigator settings. Apply with `hyprctl reload` and check
+`hyprctl configerrors`.
+
+For stacked displays, set `canvas.focus_monitor` to your output name,
+`canvas.focus_rows` to the number of vertical regions, and `canvas.focus_row`
+to `-1` for spatial selection or a zero-based fixed row. With the default empty
+monitor name and one row, focus uses the normal monitor area.
+
+### Validation and maintenance
+
+This fork has been built and used with **Hyprland 0.56.2 on Omarchy**. The border
+resize regression test covers all four edges and four corners at 100% and 50%
+zoom, release handling, interior clicks, the existing right-button gesture and
+runtime opt-out. The layer-popup test checks visibility before and during canvas
+rendering. Both passed for the initial fork publication; border resize was also
+confirmed in daily use. Other focused regression scripts cover groups, focus
+regions, button chords and persistence; their presence is not a claim that the
+entire suite was rerun for every publication.
+
+Build a separate test binary and run tests in a disposable nested compositor:
+
+```sh
+make -j4 OUT=.build/dev/spatialoverview.so
+python3 tests/border-resize-nested.py .build/dev/spatialoverview.so
+python3 tests/layer-popup-nested.py .build/dev/spatialoverview.so
+```
+
+The test environment needs a running Wayland session, `foot`, and the relevant
+helpers (`wtype`, `grim`, and Quickshell for the popup test). These tests operate
+on the child compositor, not the active desktop. Hyprland’s plugin ABI changes;
+rebuild after updating Hyprland. No workstation settings, saved window titles or
+prebuilt plugin binaries are distributed in this repository.
+
+Report issues with this customized version in
+[this fork’s issue tracker](https://github.com/danihenrique/phantomat/issues).
+Upstream remains [kaolti/phantomat](https://github.com/kaolti/phantomat); merging
+future upstream changes is a separate maintenance step.
 
 ## What it does
 
@@ -51,7 +137,7 @@ Arch or Omarchy:
 
 ```sh
 sudo pacman -S --needed base-devel git hyprland hyprgraphics pango lua
-git clone https://github.com/kaolti/phantomat.git
+git clone https://github.com/danihenrique/phantomat.git
 cd phantomat
 scripts/install.sh
 ```
@@ -223,6 +309,7 @@ Everything can also be set in `~/.config/hypr/spatialoverview.lua` (then
 | `canvas.min_zoom` / `max_zoom` | Continuous camera zoom limits |
 | `canvas.zoom_step` | Ctrl-wheel zoom strength |
 | `canvas.space_pan` | Optional Space + left-drag panning; disabled by default so Space always reaches applications |
+| `canvas.border_resize` | Primary-button border/corner resizing without modifiers (default off) |
 | `canvas.direct_input` | Forward input into transformed Wayland windows |
 | `canvas.hover_focus` | Activate a transformed window when the pointer enters it |
 | `canvas.persistent` | Keep the canvas renderer active at 100% zoom instead of returning to workspace rendering |
@@ -307,6 +394,9 @@ are. The tests run a nested Hyprland in a window (`tests/*-nested.py`);
 `make test-tools` builds the virtual mouse some of them use.
 
 ## Credits
+
+This personal fork builds on [Phantomat by kaolti (Zsolt Kacso)](https://github.com/kaolti/phantomat).
+Customizations in this repository are maintained by Daniel Henrique.
 
 Phantomat began as a fork of
 [hyprland-scroll-overview](https://github.com/yayuuu/hyprland-scroll-overview)
