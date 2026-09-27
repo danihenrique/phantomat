@@ -910,6 +910,16 @@ static CBox clampBoxToWorkspace(CBox box, PHLWORKSPACE workspace, PHLMONITOR fal
     return box;
 }
 
+static std::string borderResizeCursor(Layout::eRectCorner edge) {
+    switch (edge) {
+        case Layout::CORNER_LEFT: case Layout::CORNER_RIGHT: return "ew-resize";
+        case Layout::CORNER_TOP: case Layout::CORNER_BOTTOM: return "ns-resize";
+        case Layout::CORNER_TOPLEFT: case Layout::CORNER_BOTTOMRIGHT: return "nwse-resize";
+        case Layout::CORNER_TOPRIGHT: case Layout::CORNER_BOTTOMLEFT: return "nesw-resize";
+        default: return "";
+    }
+}
+
 static CBox resizedOverviewBoxFromCorner(const CBox& originalBox, const Vector2D& delta, Layout::eRectCorner corner, const Vector2D& minSizePx,
                                          const std::optional<Vector2D>& maxSizePx) {
     float left   = originalBox.x;
@@ -917,25 +927,12 @@ static CBox resizedOverviewBoxFromCorner(const CBox& originalBox, const Vector2D
     float right  = originalBox.x + originalBox.width;
     float bottom = originalBox.y + originalBox.height;
 
-    switch (corner) {
-        case Layout::CORNER_TOPLEFT:
-            left += delta.x;
-            top += delta.y;
-            break;
-        case Layout::CORNER_TOPRIGHT:
-            right += delta.x;
-            top += delta.y;
-            break;
-        case Layout::CORNER_BOTTOMLEFT:
-            left += delta.x;
-            bottom += delta.y;
-            break;
-        case Layout::CORNER_BOTTOMRIGHT:
-        default:
-            right += delta.x;
-            bottom += delta.y;
-            break;
-    }
+    if (corner == Layout::CORNER_NONE)
+        corner = Layout::CORNER_BOTTOMRIGHT;
+    if (corner & Layout::CORNER_LEFT) left += delta.x;
+    if (corner & Layout::CORNER_RIGHT) right += delta.x;
+    if (corner & Layout::CORNER_TOP) top += delta.y;
+    if (corner & Layout::CORNER_BOTTOM) bottom += delta.y;
 
     float width  = right - left;
     float height = bottom - top;
@@ -948,25 +945,10 @@ static CBox resizedOverviewBoxFromCorner(const CBox& originalBox, const Vector2D
     width  = std::clamp(width, minWidth, maxWidth);
     height = std::clamp(height, minHeight, maxHeight);
 
-    switch (corner) {
-        case Layout::CORNER_TOPLEFT:
-            left = right - width;
-            top  = bottom - height;
-            break;
-        case Layout::CORNER_TOPRIGHT:
-            right = left + width;
-            top   = bottom - height;
-            break;
-        case Layout::CORNER_BOTTOMLEFT:
-            left   = right - width;
-            bottom = top + height;
-            break;
-        case Layout::CORNER_BOTTOMRIGHT:
-        default:
-            right  = left + width;
-            bottom = top + height;
-            break;
-    }
+    if (corner & Layout::CORNER_LEFT) left = right - width;
+    else right = left + width;
+    if (corner & Layout::CORNER_TOP) top = bottom - height;
+    else bottom = top + height;
 
     return CBox{{left, top}, {right - left, bottom - top}};
 }
@@ -985,25 +967,12 @@ static CBox clampResizedOverviewBoxToWorkspace(const CBox& box, const CBox& work
     float right  = box.x + box.width;
     float bottom = box.y + box.height;
 
-    switch (corner) {
-        case Layout::CORNER_TOPLEFT:
-            left = std::max(left, minX);
-            top  = std::max(top, minY);
-            break;
-        case Layout::CORNER_TOPRIGHT:
-            right = std::min(right, maxX);
-            top   = std::max(top, minY);
-            break;
-        case Layout::CORNER_BOTTOMLEFT:
-            left   = std::max(left, minX);
-            bottom = std::min(bottom, maxY);
-            break;
-        case Layout::CORNER_BOTTOMRIGHT:
-        default:
-            right  = std::min(right, maxX);
-            bottom = std::min(bottom, maxY);
-            break;
-    }
+    if (corner == Layout::CORNER_NONE)
+        corner = Layout::CORNER_BOTTOMRIGHT;
+    if (corner & Layout::CORNER_LEFT) left = std::max(left, minX);
+    if (corner & Layout::CORNER_RIGHT) right = std::min(right, maxX);
+    if (corner & Layout::CORNER_TOP) top = std::max(top, minY);
+    if (corner & Layout::CORNER_BOTTOM) bottom = std::min(bottom, maxY);
 
     return CBox{{left, top}, {right - left, bottom - top}};
 }
@@ -1760,6 +1729,16 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
         else if (isCanvasDesktop() && !dragPendingPrimary && !resizePointerDown && !scrollingPanPointerDown && !dragActiveWindow && !resizeActiveWindow)
             forwardCanvasPointerMotion();
 
+        if (clientGestureButton && resizePointerDown)
+            setCanvasCursor(borderResizeCursor(resizeCorner));
+        else if (!dragPendingPrimary && !resizePointerDown && !scrollingPanPointerDown && !dragActiveWindow &&
+                 canvasForwardedPointerButtons.empty() && !g_pInputManager->getModsFromAllKBs()) {
+            Layout::eRectCorner edge = Layout::CORNER_NONE;
+            canvasBorderAtPoint(lastMousePosLocal, edge);
+            if (edge != Layout::CORNER_NONE || !navigatorOwnsPointer())
+                setCanvasCursor(borderResizeCursor(edge));
+        }
+
         //  highlightHoverDebug();
     };
 
@@ -1790,7 +1769,7 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
 
         const bool RELEASESPOINTERGRAB = event.state == WL_POINTER_BUTTON_STATE_RELEASED;
         auto       releasePointerGrab  = Hyprutils::Utils::CScopeGuard([this, RELEASESPOINTERGRAB] {
-            if (RELEASESPOINTERGRAB && g_pointerGrabOverview == this && focusChordConsumed.empty())
+            if (RELEASESPOINTERGRAB && !clientGestureButton && g_pointerGrabOverview == this && focusChordConsumed.empty())
                 g_pointerGrabOverview = nullptr;
         });
 
@@ -1948,10 +1927,42 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
                         endWindowResize();
                     resizePointerDown = false;
                     resizePendingWindow.reset();
+                    setCanvasCursor("");
                     g_pInputManager->releaseAllMouseButtons();
                 }
                 requestInputFrame();
                 return;
+            }
+
+            if (!MODS && !spacePanHeld && event.button == MAIN && event.state == WL_POINTER_BUTTON_STATE_PRESSED &&
+                !dragPendingPrimary && !dragActiveWindow && !resizePointerDown && !scrollingPanPointerDown &&
+                canvasForwardedPointerButtons.empty()) {
+                Layout::eRectCorner edge = Layout::CORNER_NONE;
+                const auto window = canvasBorderAtPoint(lastMousePosLocal, edge);
+                if (window) {
+                    resizePendingWindow = window;
+                    resizePointerDown = true;
+                    resizeStartMouseLocal = lastMousePosLocal;
+                    resizeCorner = edge;
+                    resizeWorkspaceIdx = 0;
+                    for (size_t i = 0; i < images.size(); ++i)
+                        if (images[i] && images[i]->pWorkspace == window->m_workspace)
+                            resizeWorkspaceIdx = i;
+                    beginWindowResize();
+                    if (resizeActiveWindow) {
+                        clientGestureButton = event.button;
+                        g_pointerGrabOverview = this;
+                        canvasForwardedPointerWindow.reset();
+                        canvasForwardedPointerSurface.reset();
+                        g_pSeatManager->setPointerFocus(nullptr, {});
+                        setCanvasCursor(borderResizeCursor(edge));
+                        info.cancelled = true;
+                        requestInputFrame();
+                        return;
+                    }
+                    resizePointerDown = false;
+                    resizePendingWindow.reset();
+                }
             }
 
             if (handleFocusChord(event)) {
@@ -4560,6 +4571,55 @@ static void schedulePopupFadeFrame() {
         g_popupFadeTimer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, popupFadeTick, nullptr);
     if (g_popupFadeTimer)
         wl_event_source_timer_update(g_popupFadeTimer, 4);
+}
+
+// Test the rendered border in canvas coordinates (already inverse-lens mapped).
+// A small outside band is independent of zoom, so zoomed-out edges remain usable.
+PHLWINDOW CScrollOverview::canvasBorderAtPoint(const Vector2D& point, Layout::eRectCorner& edge) const {
+    edge = Layout::CORNER_NONE;
+    const auto monitor = pMonitor.lock();
+    if (!isCanvasDesktop() || !monitor || closing || spacePanHeld ||
+        !ScrollOverview::Config::getValue<bool>("plugin:spatialoverview:canvas:border_resize"))
+        return {};
+    const auto raw = (g_pInputManager->getMouseCoordsInternal() - monitor->m_position) * monitor->m_scale;
+    if (canvasArrangeButtonBox().containsPoint(raw) ||
+        (showsNavigatorHud() && SpatialOverview::Hud::paletteHit(raw) != SpatialOverview::Hud::PALETTE_MISS))
+        return {};
+
+    const auto& windows = Desktop::windowState()->windows();
+    const float factor = std::max(0.01F, scale->value() * monitor->m_scale);
+    // Popups and screen-fixed windows take precedence over every border.
+    for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
+        const auto window = getOverviewWindowToShow(*it);
+        if (!shouldShowOverviewWindow(window)) continue;
+        const auto box = canvasDesktopWindowBox(window);
+        if (canvasScreenFixedWindow(window) && box.containsPoint(point)) return {};
+        if (!window->m_pinned && !window->m_isX11 && window->m_popupHead &&
+            window->m_popupHead->at(window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT).pos() +
+                                   (point - box.pos()) * (1.F / factor))) return {};
+    }
+    for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
+        const auto window = getOverviewWindowToShow(*it);
+        if (!shouldShowOverviewWindow(window) || window->m_pinned) continue;
+        const auto box = canvasDesktopWindowBox(window);
+        if (box.empty()) continue;
+        const float band = 8.F * monitor->m_scale;
+        if (!box.copy().expand(band).containsPoint(point)) continue;
+        // Never reach through the content of a foreground window.
+        const float inner = std::min(2.F * monitor->m_scale, sc<float>(std::min(box.width, box.height) / 4));
+        if (box.copy().expand(-inner).containsPoint(point)) return {};
+        if (!window->m_isFloating || !window->layoutTarget() || Fullscreen::controller()->isFullscreen(window)) return {};
+        const float cornerBand = 12.F * monitor->m_scale;
+        const bool left = point.x <= box.x + cornerBand;
+        const bool right = !left && point.x >= box.x + box.width - cornerBand;
+        const bool top = point.y <= box.y + cornerBand;
+        const bool bottom = !top && point.y >= box.y + box.height - cornerBand;
+        edge = sc<Layout::eRectCorner>((left ? Layout::CORNER_LEFT : 0) | (right ? Layout::CORNER_RIGHT : 0) |
+                                     (top ? Layout::CORNER_TOP : 0) | (bottom ? Layout::CORNER_BOTTOM : 0));
+        if (edge != Layout::CORNER_NONE) return window;
+        return {};
+    }
+    return {};
 }
 
 PHLWINDOW CScrollOverview::canvasDesktopWindowAtPoint(const Vector2D& point, CBox* renderedBox, Vector2D* surfaceLocal) const {

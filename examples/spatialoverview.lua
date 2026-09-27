@@ -97,6 +97,7 @@ hl.config({
         placement_gap = 40,
         space_pan = false,
         direct_input = true,
+        border_resize = false, -- primary-button drags on edges/corners, no shell plugin
         hover_focus = true,
         minimap_enabled = true,
         minimap_width = 240,

@@ -239,6 +239,7 @@ class CScrollOverview : public IOverview {
     void      updateWindowDrag();
     void      endWindowDrag();
     CBox      resizedWindowBox() const;
+    PHLWINDOW canvasBorderAtPoint(const Vector2D& point, Layout::eRectCorner& edge) const;
     void      beginWindowResize();
     void      updateWindowResize();
     void      endWindowResize();

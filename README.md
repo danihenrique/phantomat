@@ -98,9 +98,12 @@ them too.
 | `SUPER + O` | Pin the window to the screen: it stays put while the canvas moves; again puts it back on the canvas. |
 | `SUPER + 1` … `0`, `SUPER + TAB` and the other workspace keys | Nothing, on the canvas (with `canvas.places`, experimental: places on the canvas). |
 | `SUPER + J`, `P`, `L`, `Home`, `G`, `SHIFT + ALT + SUPER` + arrows | Tiling and grouping keys: nothing, on the canvas (every window floats). |
+| Left-drag a border/corner | Resize from that edge when `canvas.border_resize = true` (default off). Works in navigation and direct-input modes; no modifier needed. |
 | Middle-drag | Pan the canvas. |
 | `CTRL` + wheel, pinch | Zoom. |
 | `SUPER` + left-drag, right-drag | Move, resize a window. |
+
+Border resize uses an 8 logical-pixel outside grab band and 2 pixels inside the window, independent of zoom. Corners resize both axes; sides resize only one. Popups, panels, pinned/fullscreen windows and modified clicks retain their existing behavior. The existing right-button resize is unchanged. No shell plugin is required.
 
 ### In the zoomed-out canvas
 
