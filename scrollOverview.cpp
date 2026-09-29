@@ -421,6 +421,13 @@ static bool isPointerOnTopLayer(PHLMONITOR monitor) {
     Vector2D   surfaceCoords;
     PHLLS      layerSurface;
 
+    // Popups can extend beyond their parent layer's input region. They are
+    // rendered in native screen coordinates, including when the parent bar
+    // is animated, so let Hyprland deliver their motion/buttons/scroll too.
+    if (Desktop::viewState()->hitTest().layerPopupSurfaceAt(MOUSECOORDS, monitor, &surfaceCoords, &layerSurface))
+        return true;
+
+    layerSurface.reset();
     const auto isAnimatedChrome = [&monitor](const PHLLS& surface) {
         const auto overview = scrollOverviewForMonitor(monitor);
         const auto spatial  = overview ? dynamic_cast<CScrollOverview*>(overview.get()) : nullptr;
