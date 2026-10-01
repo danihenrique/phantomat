@@ -240,6 +240,12 @@ void applyPendingHud() {
     }
 
     const auto PREVIOUS = Render::GL::g_pHyprOpenGL->useShader(SHADER);
+    if (const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock()) {
+        if (const auto LOCATION = glGetUniformLocation(SHADER->program(), "screenTransform"); LOCATION >= 0)
+            glUniform1i(LOCATION, sc<int>(MONITOR->m_transform));
+        if (const auto LOCATION = glGetUniformLocation(SHADER->program(), "screenSize"); LOCATION >= 0)
+            glUniform2f(LOCATION, sc<float>(MONITOR->m_transformedSize.x), sc<float>(MONITOR->m_transformedSize.y));
+    }
     glUniform1i(SAMPLER, HUD_TEXTURE_UNIT);
     if (SHOW)
         glUniform4f(RECT, pending.rect[0], pending.rect[1], pending.rect[2], pending.rect[3]);

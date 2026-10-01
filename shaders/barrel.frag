@@ -46,6 +46,27 @@ uniform vec4 hudAtlasRects[MAX_HUD_REGIONS]; // device px, top-left origin
 uniform vec4 hudAtlasUVs[MAX_HUD_REGIONS];   // x, y, w, h in the atlas
 uniform int hudAtlasCount;
 
+// gl_FragCoord runs along the panel's own scanout, but the chrome above is
+// laid out on the screen as it stands on the desk.
+uniform int screenTransform; // wl_output transform of the monitor
+uniform vec2 screenSize;     // transformed size in device px
+
+vec2 screenPoint() {
+    vec2 p = gl_FragCoord.xy;
+    if (screenTransform == 0 || screenSize.x <= 0.0 || screenSize.y <= 0.0)
+        return p;
+    int rotation = screenTransform % 4;
+    if (screenTransform >= 4)
+        p.x = (rotation % 2 == 1 ? screenSize.y : screenSize.x) - p.x;
+    if (rotation == 1)
+        return vec2(screenSize.x - p.y, p.x);
+    if (rotation == 2)
+        return screenSize - p;
+    if (rotation == 3)
+        return vec2(p.y, screenSize.y - p.x);
+    return p;
+}
+
 float roundedDistance(vec2 point, vec4 rect, float radius) {
     vec2 halfSize = rect.zw * 0.5;
     vec2 centered = point - (rect.xy + halfSize);
@@ -74,7 +95,7 @@ vec4 composeMinimap(vec4 base) {
         (minimapArrangeButton.z <= 0.0 || minimapArrangeButton.w <= 0.0) || minimapTransition <= 0.001)
         return base;
 
-    vec2 point = gl_FragCoord.xy;
+    vec2 point = screenPoint();
     vec4 color = base;
     float panelRadius = max(6.0, min(minimapPanel.z, minimapPanel.w) * 0.075);
     float panelMask = roundedMask(point, minimapPanel, panelRadius);
@@ -130,7 +151,7 @@ vec4 composeHud(vec4 base) {
     if (hudRect.z <= 0.0 || hudRect.w <= 0.0 || hudAlpha <= 0.001)
         return base;
 
-    vec2 uv = (gl_FragCoord.xy - hudRect.xy) / hudRect.zw;
+    vec2 uv = (screenPoint() - hudRect.xy) / hudRect.zw;
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)
         return base;
 
@@ -146,7 +167,7 @@ vec4 composeHudAtlas(vec4 base) {
         if (i >= hudAtlasCount)
             break;
         vec4 rect = hudAtlasRects[i];
-        vec2 local = (gl_FragCoord.xy - rect.xy) / rect.zw;
+        vec2 local = (screenPoint() - rect.xy) / rect.zw;
         if (local.x < 0.0 || local.y < 0.0 || local.x > 1.0 || local.y > 1.0)
             continue;
         vec4 hud = texture(hudAtlas, hudAtlasUVs[i].xy + local * hudAtlasUVs[i].zw) * hudAlpha;

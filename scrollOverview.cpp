@@ -130,15 +130,22 @@ static float minimapFlashAlpha(const Time::steady_tp& now) {
 // Windows fullscreen on a screen whose canvas stepped aside for them (see
 // "Fullscreen on the canvas").
 struct SCanvasFullscreen {
-    PHLWINDOWREF        window;
-    PHLMONITORREF       monitor;
-    std::optional<CBox> request; // what an X11 app last asked for meanwhile (X11 coordinates)
-    std::optional<CBox> before;  // where it was before, as the canvas last drew it
+    PHLWINDOWREF            window;
+    PHLMONITORREF           monitor;
+    std::optional<CBox>     request; // what an X11 app last asked for meanwhile (X11 coordinates)
+    std::optional<CBox>     before;  // where it was before, as the canvas last drew it
+    std::optional<Vector2D> savedCamera;
 };
 static std::vector<SCanvasFullscreen> g_canvasFullscreen;
 void unconstrainCanvasWindows();
 static bool canvasFullscreenWindow(const PHLWINDOW& window) {
     return window && std::ranges::any_of(g_canvasFullscreen, [&window](const auto& entry) { return entry.window.lock() == window; });
+}
+static bool isScreensaverWindow(const PHLWINDOW& window) {
+    if (!window)
+        return false;
+    const auto APPID = window->m_class.empty() ? window->m_initialClass : window->m_class;
+    return APPID == "org.omarchy.screensaver" || APPID.ends_with(".screensaver");
 }
 // Each window's box when the canvas last drew it outside fullscreen. After
 // fullscreen Hyprland centers a floating window on its monitor; the canvas
@@ -2320,9 +2327,11 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
             return;
 
         if (isCanvasDesktop() && window && window->m_monitor == pMonitor) {
-            manageCanvasWindow(window, true);
-            followCanvasWindow(window, false);
-            noteCanvasLayoutChanged();
+            if (!isScreensaverWindow(window) && !Fullscreen::controller()->isFullscreen(window)) {
+                manageCanvasWindow(window, true);
+                followCanvasWindow(window, false);
+                noteCanvasLayoutChanged();
+            }
         }
 
         if (sharedStateOwner && SpatialOverview::Navigator::isOpen())
@@ -2656,6 +2665,7 @@ void CScrollOverview::updateBackdropBlurCache(PHLMONITOR monitor, int wallpaperM
         return;
 
     const float BLURSTRENGTH = ScrollOverview::Config::getBlurStrength();
+    const bool  BLURENABLED  = ScrollOverview::Config::getBlur();
     if (lastBackdropWallpaperMode != wallpaperMode) {
         backdropBlurDirty         = true;
         lastBackdropWallpaperMode = wallpaperMode;
@@ -2663,6 +2673,10 @@ void CScrollOverview::updateBackdropBlurCache(PHLMONITOR monitor, int wallpaperM
     if (std::abs(lastBackdropBlurStrength - BLURSTRENGTH) > 0.001F) {
         backdropBlurDirty         = true;
         lastBackdropBlurStrength  = BLURSTRENGTH;
+    }
+    if (lastBackdropBlurEnabled != BLURENABLED) {
+        backdropBlurDirty       = true;
+        lastBackdropBlurEnabled = BLURENABLED;
     }
 
     const auto FBSIZE     = monitor->m_pixelSize;
@@ -3616,6 +3630,7 @@ bool CScrollOverview::isCanvasNavigationActive() const {
 }
 
 void CScrollOverview::toggleCanvasNavigation() {
+    syncAnimationConfig();
     const auto MONITOR = pMonitor.lock();
     if (!isPersistentCanvas() || !MONITOR || closing)
         return;
@@ -3669,6 +3684,7 @@ void CScrollOverview::toggleCanvasNavigation() {
 }
 
 void CScrollOverview::refreshCanvasSettings() {
+    syncAnimationConfig();
     const auto MONITOR = pMonitor.lock();
     if (!isCanvasDesktop() || !MONITOR || closing)
         return;
@@ -4060,7 +4076,7 @@ static void canvasFullscreenStepAside(const PHLWINDOW& window, const PHLMONITOR&
         window->m_monitor = monitor;
         Fullscreen::controller()->setFullscreenMode(window, MODES.internal, MODES.client);
     }
-    g_canvasFullscreen.push_back({.window = window, .monitor = monitor, .before = before});
+    g_canvasFullscreen.push_back({.window = window, .monitor = monitor, .before = before, .savedCamera = canvas->restingCameraOffset()});
     removeOverview(canvas);
     g_canvasFullscreenApplying = false;
     if (from)
@@ -4091,8 +4107,20 @@ static void canvasFullscreenComeBack(const SCanvasFullscreen& entry) {
         }))
         canvas->toggleCanvasNavigation();
     const auto TARGET = validMapped(WINDOW) ? WINDOW->layoutTarget() : nullptr;
-    if (!TARGET || WINDOW->m_workspace != MONITOR->m_activeWorkspace || Fullscreen::controller()->isFullscreen(WINDOW))
+    if (!TARGET || WINDOW->m_workspace != MONITOR->m_activeWorkspace || Fullscreen::controller()->isFullscreen(WINDOW)) {
+        if (!validMapped(WINDOW)) {
+            auto current = getOverviewWindowToShow(Desktop::focusState()->window());
+            if (!current || current->m_monitor != MONITOR || !shouldShowOverviewWindow(current))
+                current = MONITOR->m_activeWorkspace ? getOverviewWindowToShow(MONITOR->m_activeWorkspace->getLastFocusedWindow()) : nullptr;
+            if (validMapped(current) && shouldShowOverviewWindow(current)) {
+                canvas->canvasAdoptFocus(current);
+                canvas->followCanvasWindow(current, true, false);
+            } else if (entry.savedCamera) {
+                canvas->warpCameraOffset(*entry.savedCamera);
+            }
+        }
         return;
+    }
     // The keyboard stays with the window that left fullscreen, not with
     // whatever the reopened canvas had selected.
     auto keepFocus = Hyprutils::Utils::CScopeGuard([canvas, WINDOW, FOCUSED] {
@@ -4743,6 +4771,8 @@ void CScrollOverview::ensureCanvasKeyboardFocus(PHLWINDOW window) {
 }
 
 bool CScrollOverview::followCanvasWindow(PHLWINDOW window, bool syncFocus, bool animate) {
+    if (animate)
+        syncAnimationConfig();
     window = getOverviewWindowToShow(window);
     const auto MONITOR = pMonitor.lock();
     if (!isCanvasDesktop() || !MONITOR || !shouldShowOverviewWindow(window) || closing)
@@ -4790,7 +4820,7 @@ bool CScrollOverview::manageCanvasWindow(PHLWINDOW window, bool placeNew) {
 
     window = getOverviewWindowToShow(window);
     auto TARGET = window ? window->layoutTarget() : nullptr;
-    if (!shouldShowOverviewWindow(window) || !TARGET || window->m_pinned)
+    if (!shouldShowOverviewWindow(window) || !TARGET || window->m_pinned || isScreensaverWindow(window))
         return false;
 
     if (window->m_workspace && window->m_workspace->m_isSpecialWorkspace) return false;
@@ -4847,7 +4877,7 @@ bool CScrollOverview::manageCanvasWindow(PHLWINDOW window, bool placeNew) {
     const auto occupied = [&](const CBox& candidate) {
         for (const auto& existingRef : Desktop::windowState()->windows()) {
             const auto EXISTING = getOverviewWindowToShow(existingRef);
-            if (!shouldShowOverviewWindow(EXISTING) || EXISTING == window || !EXISTING->layoutTarget())
+            if (!shouldShowOverviewWindow(EXISTING) || EXISTING == window || !EXISTING->layoutTarget() || isScreensaverWindow(EXISTING))
                 continue;
             auto BOX = EXISTING->layoutTarget()->position();
             BOX.expand(GAP * 0.5F);
@@ -4906,7 +4936,7 @@ bool CScrollOverview::arrangeCanvasWindows() {
 
     for (const auto& windowRef : windows) {
         auto WINDOW = getOverviewWindowToShow(windowRef);
-        if (!shouldShowOverviewWindow(WINDOW) || WINDOW->m_pinned || !visited.emplace(WINDOW.get()).second)
+        if (!shouldShowOverviewWindow(WINDOW) || WINDOW->m_pinned || isScreensaverWindow(WINDOW) || !visited.emplace(WINDOW.get()).second)
             continue;
 
         manageCanvasWindow(WINDOW, false);
@@ -9433,10 +9463,13 @@ void CScrollOverview::render() {
         OverviewRender::flushPass(MONITOR);
         g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor{0.F, 0.F, 0.F, 1.F}}, {});
         renderBackdropTiled(MONITOR, backdropSharpFB->getTexture(), 1.F, BACKDROP);
-    } else if (WALLPAPERMODE == 0 || WALLPAPERMODE == 2)
+    } else if (WALLPAPERMODE == 0 || WALLPAPERMODE == 2) {
         renderGlobalWallpaper(MONITOR, NOW);
-    else
+        OverviewRender::flushPass(MONITOR);
+    } else {
         g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor{0.F, 0.F, 0.F, 1.F}}, {});
+        OverviewRender::flushPass(MONITOR);
+    }
 
     if (BLURALPHA > 0.001F && backdropBlurFB && backdropBlurFB->isAllocated() && backdropBlurFB->getTexture())
         renderBackdropBlurCache(MONITOR, BLURALPHA, BACKDROP);
@@ -9516,6 +9549,22 @@ void CScrollOverview::render() {
 
 void CScrollOverview::fullRender() {
     return;
+}
+
+void CScrollOverview::syncAnimationConfig() {
+    if (!overviewAnimationConfig)
+        return;
+
+    const auto WINDOWSMOVECONFIG = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+    const auto WINDOWSMOVEVALUES = WINDOWSMOVECONFIG && WINDOWSMOVECONFIG->pValues ? WINDOWSMOVECONFIG->pValues.lock() : WINDOWSMOVECONFIG;
+    auto       overviewBezier    = ScrollOverview::Config::getAnimationBezier();
+    if (!Animation::mgr()->bezierExists(overviewBezier))
+        overviewBezier = WINDOWSMOVEVALUES && Animation::mgr()->bezierExists(WINDOWSMOVEVALUES->internalBezier) ? WINDOWSMOVEVALUES->internalBezier : "default";
+
+    overviewAnimationConfig->internalSpeed   = ScrollOverview::Config::getAnimationSpeed();
+    overviewAnimationConfig->internalEnabled = ScrollOverview::Config::getAnimationEnabled();
+    if (Animation::mgr()->bezierExists(overviewBezier))
+        overviewAnimationConfig->internalBezier = overviewBezier;
 }
 
 static float hyprlerp(const float& from, const float& to, const float perc) {
@@ -9874,6 +9923,13 @@ Vector2D CScrollOverview::restingCameraOffset() const {
     return viewOffset ? viewOffset->goal() : Vector2D{};
 }
 
+void CScrollOverview::warpCameraOffset(const Vector2D& offset) {
+    if (viewOffset) {
+        viewOffset->setValueAndWarp(offset);
+        *viewOffset = offset;
+    }
+}
+
 CBox CScrollOverview::currentCanvasViewportWorld() const {
     const auto MONITOR = pMonitor.lock();
     if (!MONITOR)
@@ -10179,6 +10235,7 @@ void CScrollOverview::focusCanvasClick(PHLWINDOW window) {
 }
 
 void CScrollOverview::landOnWindow(PHLWINDOW window) {
+    syncAnimationConfig();
     const auto MONITOR = pMonitor.lock();
     window             = getOverviewWindowToShow(window);
     if (!isCanvasDesktop() || !MONITOR || closing)

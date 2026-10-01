@@ -91,6 +91,8 @@ class CScrollOverview : public IOverview {
     void         noteCanvasLayoutChanged();
     Vector2D     restingCameraOffset() const;
     SpatialOverview::Memory::SCamera memoryCamera() const;
+    void         warpCameraOffset(const Vector2D& offset);
+    bool         followCanvasWindow(PHLWINDOW window, bool syncFocus, bool animate = true);
     void         saveSharedCanvasLayout();
     void         loadSharedCanvasLayout();
     void         checkpointCanvas();
@@ -99,6 +101,7 @@ class CScrollOverview : public IOverview {
     bool         hasNavigationReturn = false;
 
     void         fullRender() override;
+    void         syncAnimationConfig() override;
 
     // Popups: Hyprland places and fades them in the window's real
     // coordinates, which on the canvas are not where the window is drawn.
@@ -218,7 +221,6 @@ class CScrollOverview : public IOverview {
     PHLWINDOW    canvasDesktopWindowAtPoint(const Vector2D& point, CBox* renderedBox = nullptr, Vector2D* surfaceLocal = nullptr) const;
     void         zoomCanvasAt(const Vector2D& point, float requestedZoom, bool animate = false);
     bool         manageCanvasWindow(PHLWINDOW window, bool placeNew);
-    bool         followCanvasWindow(PHLWINDOW window, bool syncFocus, bool animate = true);
     void         ensureCanvasKeyboardFocus(PHLWINDOW window = {});
     void         seedCanvasWindows();
     void         forwardCanvasPointerMotion(uint32_t timeMs = 0);
@@ -290,6 +292,7 @@ class CScrollOverview : public IOverview {
     float  lastOverviewBlurScale    = 1.F;
     int    lastBackdropWallpaperMode = -1;
     float  lastBackdropBlurStrength = -1.F;
+    bool   lastBackdropBlurEnabled  = false;
     Vector2D lastOverviewBlurViewOffset = Vector2D{};
     SP<Render::IFramebuffer> backdropBlurFB;
     SP<Render::IFramebuffer> backdropSharpFB;
