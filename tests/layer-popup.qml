@@ -4,9 +4,11 @@ import Quickshell.Io
 ShellRoot {
   id: root
   property int clicks: 0
+  property int wheelDelta: 0
   IpcHandler {
     target: "test"
     function clicks(): int { return root.clicks }
+    function wheelDelta(): int { return root.wheelDelta }
   }
   PanelWindow {
     id: bar
@@ -26,6 +28,7 @@ ShellRoot {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         onClicked: root.clicks++
+        onWheel: event => { root.wheelDelta += event.angleDelta.y; event.accepted = true }
       }
     }
   }

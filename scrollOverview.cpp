@@ -2244,6 +2244,11 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
         if (info.cancelled || closing || sessionLocked() || scrollOverviewAt(g_pInputManager->getMouseCoordsInternal()).get() != this)
             return;
 
+        // Layer-shell menus use native coordinates, just like their buttons
+        // and pointer motion. Do not steal their wheel events for the canvas.
+        if (isPointerOnTopLayer(pMonitor.lock()))
+            return;
+
         markCanvasCameraActive(pMonitor.lock());
 
         if (isCanvasDesktop()) {

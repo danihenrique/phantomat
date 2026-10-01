@@ -4,6 +4,7 @@
 //     abs X Y      move to X,Y in a WIDTHxHEIGHT output layout
 //     rel DX DY    move by DX,DY
 //     down / up    press / release the left button   (rdown / rup: right)
+//     wheel STEPS  vertical wheel notches
 //     sleep MS
 //
 // Everything runs in one connection, so a pressed button stays pressed
@@ -38,7 +39,7 @@ static uint32_t now_ms(void) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: vpointer WIDTH HEIGHT [abs X Y|rel DX DY|down|up|rdown|rup|sleep MS]...\n");
+        fprintf(stderr, "usage: vpointer WIDTH HEIGHT [abs X Y|rel DX DY|down|up|rdown|rup|wheel STEPS|sleep MS]...\n");
         return 2;
     }
     struct wl_display* display = wl_display_connect(NULL);
@@ -68,6 +69,10 @@ int main(int argc, char** argv) {
             const uint32_t BUTTON = cmd[0] == 'r' ? BTN_RIGHT : BTN_LEFT;
             const uint32_t STATE  = strstr(cmd, "down") ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED;
             zwlr_virtual_pointer_v1_button(pointer, now_ms(), BUTTON, STATE);
+        } else if (!strcmp(cmd, "wheel") && i + 1 < argc) {
+            const int steps = atoi(argv[++i]);
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+            zwlr_virtual_pointer_v1_axis_discrete(pointer, now_ms(), WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_double(steps * 15.0), steps);
         } else if (!strcmp(cmd, "sleep") && i + 1 < argc) {
             wl_display_flush(display);
             usleep(atoi(argv[i + 1]) * 1000);
