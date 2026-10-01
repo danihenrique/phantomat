@@ -70,6 +70,21 @@ For stacked displays, set `canvas.focus_monitor` to your output name,
 to `-1` for spatial selection or a zero-based fixed row. With the default empty
 monitor name and one row, focus uses the normal monitor area.
 
+### Upstream integration (2026-10-01)
+
+The fork includes upstream through `d62ba67`: camera recovery after temporary
+fullscreen windows and screensavers close, wallpaper/blur cache fixes, upright
+HUD rendering on rotated monitors, and the live flight-speed slider with a 5%
+default minimum zoom. The fork's mouse controls, groups, persistent layout,
+vertical focus regions and native layer-popup input remain available.
+Existing user configuration still takes precedence: a configured
+`canvas.min_zoom = 0.15` stays at 15% until the user changes it.
+
+The integration also preserves native wheel events over layer-shell popups.
+Regression coverage includes temporary fullscreen exit with grouped windows
+(`tests/fullscreen-groups-nested.py`) and the flight-speed slider's duration
+conversion, persistence and reset (`tests/tuner-nested.py`).
+
 ### Validation and maintenance
 
 This fork has been built and used with **Hyprland 0.56.2 on Omarchy**. The border

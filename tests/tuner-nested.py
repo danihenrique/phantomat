@@ -64,6 +64,17 @@ try:
     check(abs(coarse - round(fine - 0.1, 2)) < 1e-4, f"⌃← is ten steps, back on the step grid ({coarse:.4f})")
     n.keys("-k", "Delete")
     check(abs(opt("distortion:strength") - start) < 1e-4, "Delete reverts to the value at opening")
+    # Upstream's speed slider stores duration, so increasing speed must
+    # decrease the duration and reverting must preserve the original value.
+    n.keys("-k", "Escape")
+    n.keys("Flight speed"); time.sleep(0.3)
+    duration = opt("animation:speed")
+    n.keys("-k", "Right")
+    check(opt("animation:speed") < duration, "flight speed slider reduces animation duration")
+    check('["animation:speed"] = ' in tuned(), "flight speed is persisted")
+    n.keys("-k", "Delete")
+    check(abs(opt("animation:speed") - duration) < 1e-4, "flight speed revert preserves duration")
+    check(abs(opt("canvas:min_zoom") - 0.15) < 1e-4, "configured minimum zoom overrides the new 5 percent default")
     # filter to another setting and flip a switch
     n.keys("-k", "Escape")
     n.keys("uppercase"); time.sleep(0.3)
