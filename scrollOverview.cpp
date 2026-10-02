@@ -5225,7 +5225,7 @@ void CScrollOverview::seedCanvasWindows() {
         manageCanvasWindow(window, true);
 }
 
-void CScrollOverview::forwardCanvasPointerMotion(uint32_t timeMs) {
+void CScrollOverview::forwardCanvasPointerMotion(uint32_t timeMs, bool sendFrame) {
     if (!isCanvasDesktop() || !ScrollOverview::Config::getCanvasDirectInput() || spacePanHeld || scrollingPanPointerDown || dragActiveWindow || resizeActiveWindow)
         return;
 
@@ -5293,7 +5293,8 @@ void CScrollOverview::forwardCanvasPointerMotion(uint32_t timeMs) {
     canvasForwardedPointerSurface = SURFACE;
     g_pSeatManager->setPointerFocus(SURFACE, SURFACELOCAL);
     g_pSeatManager->sendPointerMotion(timeMs ? timeMs : Time::millis(Time::steadyNow()), SURFACELOCAL);
-    g_pSeatManager->sendPointerFrame();
+    if (sendFrame)
+        g_pSeatManager->sendPointerFrame();
 
     if (ScrollOverview::Config::getCanvasHoverFocus() && !(canvasNavigationActive && SpatialOverview::Navigator::isOpen()) && !hoverFocusSettling &&
         canvasForwardedPointerButtons.empty() && WINDOW != PREVIOUSWINDOW) {
@@ -5421,9 +5422,27 @@ bool CScrollOverview::forwardCanvasPointerAxis(const IPointer::SAxisEvent& event
     if (!isCanvasDesktop() || !ScrollOverview::Config::getCanvasDirectInput())
         return false;
 
-    forwardCanvasPointerMotion(event.timeMs);
+    const bool smooth = event.source == WL_POINTER_AXIS_SOURCE_FINGER || event.source == WL_POINTER_AXIS_SOURCE_CONTINUOUS;
+    if (!smooth || !canvasPointerAxisFramePending)
+        forwardCanvasPointerMotion(event.timeMs, !smooth);
     if (!canvasForwardedPointerWindow || !canvasForwardedPointerSurface)
         return false;
+
+    // Both axes and their stop events belong to one hardware report. Splitting
+    // them into separate Wayland frames makes clients end the gesture twice
+    // and calculate fling velocity from incomplete samples.
+    if (smooth && !canvasPointerAxisFramePending) {
+        canvasPointerFrameHooks.clear();
+        for (const auto& pointer : g_pInputManager->m_pointers) {
+            canvasPointerFrameHooks.emplace_back(pointer->m_pointerEvents.frame.listen([this]() {
+                if (!canvasPointerAxisFramePending)
+                    return;
+                canvasPointerAxisFramePending = false;
+                g_pSeatManager->sendPointerFrame();
+            }));
+        }
+        canvasPointerAxisFramePending = true;
+    }
 
     // Libinput already reports the wheel in v120 units (120 = one notch).
     // Passing that number through as a discrete step, then multiplying it by
@@ -5431,7 +5450,8 @@ bool CScrollOverview::forwardCanvasPointerAxis(const IPointer::SAxisEvent& event
     const bool wheel = event.source == WL_POINTER_AXIS_SOURCE_WHEEL || event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT;
     if (!wheel) {
         g_pSeatManager->sendPointerAxis(event.timeMs, event.axis, event.delta, event.deltaDiscrete, 0, event.source, event.relativeDirection);
-        g_pSeatManager->sendPointerFrame();
+        if (!smooth)
+            g_pSeatManager->sendPointerFrame();
         return true;
     }
 
@@ -9715,6 +9735,8 @@ void CScrollOverview::releaseInputListeners() {
     mouseMoveHook.reset();
     touchMoveHook.reset();
     mouseAxisHook.reset();
+    canvasPointerFrameHooks.clear();
+    canvasPointerAxisFramePending = false;
     pinchBeginHook.reset();
     pinchUpdateHook.reset();
     pinchEndHook.reset();

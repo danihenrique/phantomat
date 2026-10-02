@@ -227,7 +227,7 @@ class CScrollOverview : public IOverview {
     bool         manageCanvasWindow(PHLWINDOW window, bool placeNew);
     void         ensureCanvasKeyboardFocus(PHLWINDOW window = {});
     void         seedCanvasWindows();
-    void         forwardCanvasPointerMotion(uint32_t timeMs = 0);
+    void         forwardCanvasPointerMotion(uint32_t timeMs = 0, bool sendFrame = true);
     bool         handleFocusChord(const IPointer::SButtonEvent& event);
     bool         flushFocusChord();
     bool         forwardCanvasPointerButton(const IPointer::SButtonEvent& event);
@@ -463,6 +463,8 @@ class CScrollOverview : public IOverview {
     CHyprSignalListener             touchMoveHook;
     CHyprSignalListener             touchDownHook;
     CHyprSignalListener             mouseAxisHook;
+    std::vector<CHyprSignalListener> canvasPointerFrameHooks;
+    bool                           canvasPointerAxisFramePending = false;
     CHyprSignalListener             pinchBeginHook;
     CHyprSignalListener             pinchUpdateHook;
     CHyprSignalListener             pinchEndHook;

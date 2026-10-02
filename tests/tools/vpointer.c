@@ -5,6 +5,8 @@
 //     rel DX DY    move by DX,DY
 //     down / up    press / release the left button   (rdown / rup: right)
 //     wheel STEPS  vertical wheel notches
+//     finger DY DX   two-finger scroll, both axes in one report
+//     stop           end both scroll axes in one report
 //     sleep MS
 //
 // Everything runs in one connection, so a pressed button stays pressed
@@ -73,6 +75,18 @@ int main(int argc, char** argv) {
             const int steps = atoi(argv[++i]);
             zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
             zwlr_virtual_pointer_v1_axis_discrete(pointer, now_ms(), WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_double(steps * 15.0), steps);
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+        } else if (!strcmp(cmd, "finger") && i + 2 < argc) {
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_FINGER);
+            zwlr_virtual_pointer_v1_axis(pointer, now_ms(), WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_double(atof(argv[i + 1])));
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_FINGER);
+            zwlr_virtual_pointer_v1_axis(pointer, now_ms(), WL_POINTER_AXIS_HORIZONTAL_SCROLL, wl_fixed_from_double(atof(argv[i + 2])));
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_FINGER);
+            i += 2;
+        } else if (!strcmp(cmd, "stop")) {
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_FINGER);
+            zwlr_virtual_pointer_v1_axis_stop(pointer, now_ms(), WL_POINTER_AXIS_VERTICAL_SCROLL);
+            zwlr_virtual_pointer_v1_axis_stop(pointer, now_ms(), WL_POINTER_AXIS_HORIZONTAL_SCROLL);
         } else if (!strcmp(cmd, "sleep") && i + 1 < argc) {
             wl_display_flush(display);
             usleep(atoi(argv[i + 1]) * 1000);
