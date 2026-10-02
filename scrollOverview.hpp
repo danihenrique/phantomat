@@ -62,6 +62,10 @@ class CScrollOverview : public IOverview {
     float        overviewProgress() const;
     float        distortionProgress() const;
     bool         isCanvasDesktop() const;
+    bool         acceptsCanvasWorkspace(const PHLWINDOW& window) const;
+    bool         shouldShowOverviewWindow(const PHLWINDOW& window) const;
+    bool         canvasScreenFixedWindow(const PHLWINDOW& window) const;
+    bool         syncCanvasWorkspace();
     bool         isPersistentCanvas() const;
     bool         isCanvasNavigationActive() const;
     void         toggleCanvasNavigation();

@@ -355,6 +355,8 @@ static void registerConfigValues() {
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:desktop_mode", "render one shared window canvas instead of workspace cards", false));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CBoolValue>("plugin:spatialoverview:canvas:workspace_isolation", "independent canvas and camera per native workspace; disables linked screens and places", false));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:persistent", "keep the canvas renderer active at normal zoom", false));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:linked_screens", "screens show adjacent parts of the canvas and move together, like one wide desk", true));
@@ -670,6 +672,10 @@ bool getCanvasEnabled() {
 
 bool getCanvasDesktopMode() {
     return getValue<bool>("plugin:spatialoverview:canvas:desktop_mode");
+}
+
+bool getCanvasWorkspaceIsolation() {
+    return getCanvasDesktopMode() && getValue<bool>("plugin:spatialoverview:canvas:workspace_isolation");
 }
 
 bool getCanvasPlaces() {

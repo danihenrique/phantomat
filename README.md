@@ -319,6 +319,7 @@ Everything can also be set in `~/.config/hypr/spatialoverview.lua` (then
 | --- | --- |
 | `canvas.desktop_mode` | Enable the shared infinite-window desktop |
 | `canvas.linked_screens` | Screens show adjacent parts of the canvas and move together (default); off: each screen is its own camera |
+| `canvas.workspace_isolation` | Independent canvas per native workspace (off by default); filters windows, input, search, groups and undo; remembers each workspace camera. Overrides linked screens and places. |
 | `canvas.places` | Experimental, off by default: the workspace keys go to places on the canvas and take windows there |
 | `canvas.initial_zoom` | Camera zoom when desktop mode opens |
 | `canvas.min_zoom` / `max_zoom` | Continuous camera zoom limits |
@@ -422,3 +423,34 @@ kept in this repository. Neither project endorses this one.
 ## License
 
 BSD 3-Clause; see [LICENSE](LICENSE).
+
+### Independent workspace canvases
+
+Set `canvas.workspace_isolation = true` in the plugin configuration, then close
+and reopen the canvas (or reload the plugin). Each output shows only the windows
+of its active native workspace, both at normal zoom and in the navigator. Bar
+clicks and native workspace dispatchers use the same isolation boundary. Existing
+`canvas_or("go ...", ...)` and `canvas_or("send ...", ...)` bindings fall back to
+native workspace operations. Pinned windows intentionally remain screen-fixed
+and visible across workspaces, as in Hyprland. Special workspaces keep their
+existing native handling.
+
+Camera position, zoom and navigation return view are retained per output and
+workspace ID; with `remember_layout` they are also saved across plugin reloads.
+Window positions remain world coordinates. An existing workspace without a saved
+camera initially centers one of its windows; a new empty workspace starts at the
+origin. Workspace ownership remains Hyprland's: automatic canvas reassignment to
+the screen's workspace is disabled. Linked screens and experimental canvas places
+are inactive in this mode. Sending a window uses the native workspace move; it
+keeps its canvas position, so use the navigator to locate it if it is off camera.
+
+Workspace switches cancel ongoing canvas drags/resizes and clear temporary group
+selection and search. Undo journals are session-local and separate per workspace;
+undo cannot retrieve a window that was explicitly moved to another workspace.
+Groups spanning workspace boundaries operate only on members in the same
+workspace as the selected window.
+
+Regression: `python3 tests/workspaces-nested.py .build/workspaces/spatialoverview.so`
+creates an isolated compositor and checks pixels, input, ownership, native
+switching and camera restoration. `WORKSPACE_BASELINE=1` reproduces the shared
+canvas visibility failure on the old build.

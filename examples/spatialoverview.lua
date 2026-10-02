@@ -87,6 +87,7 @@ hl.config({
         groups = false, -- Ctrl-click selection; Ctrl+G / Ctrl+Shift+G group / ungroup
         enabled = true,
         desktop_mode = true,
+        workspace_isolation = false, -- true: independent native workspaces and cameras
         persistent = true,
         initial_zoom = 0.72,
         min_zoom = 0.05,
@@ -228,7 +229,7 @@ end)
 -- runs it.)
 local function canvas_or(action, fallback)
   return function()
-    if not pcall(hl.plugin.spatialoverview.canvas, action) then
+    if not pcall(hl.plugin.spatialoverview._dispatch, "canvas", action) then
       for _, dispatcher in ipairs(fallback) do
         hl.dispatch(dispatcher)
       end

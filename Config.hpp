@@ -110,6 +110,7 @@ float         getWorkspaceOutlineDropOpacity();
 float         getWorkspaceOutlineDropFillOpacity();
 bool          getCanvasEnabled();
 bool          getCanvasDesktopMode();
+bool          getCanvasWorkspaceIsolation();
 bool          getCanvasPersistent();
 bool          getCanvasLinkedScreens();
 bool                                        getBackgroundRightClick();

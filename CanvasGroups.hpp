@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Config.hpp"
 #include <algorithm>
 #include <optional>
 #include <vector>
@@ -32,8 +33,12 @@ namespace SpatialOverview::CanvasGroups {
     inline Members members(const PHLWINDOW& w) {
         prune();
         for (const auto& group : groups)
-            if (contains(group, w))
-                return group;
+            if (contains(group, w)) {
+                auto result = group;
+                if (ScrollOverview::Config::getCanvasWorkspaceIsolation())
+                    std::erase_if(result, [&](const auto& ref) { const auto member = ref.lock(); return !member || member->m_workspace != w->m_workspace; });
+                return result;
+            }
         return {};
     }
     inline void toggle(const PHLWINDOW& w) {

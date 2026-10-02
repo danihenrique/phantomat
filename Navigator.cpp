@@ -2,6 +2,7 @@
 
 #include "Navigator.hpp"
 #include "Tuning.hpp"
+#include "scrollOverview.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -87,6 +88,8 @@ namespace SpatialOverview::Navigator {
             if (window->m_workspace && window->m_workspace->m_isSpecialWorkspace)
                 return false;
             if (window->m_pinned)
+                return false;
+            if (const auto canvas = dynamic_cast<CScrollOverview*>(activeScrollOverview().get()); canvas && !canvas->acceptsCanvasWorkspace(window))
                 return false;
             return true;
         }
