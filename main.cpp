@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <linux/input-event-codes.h>
 #include <sstream>
+#include <chrono>
+#include <hyprland/src/pointer/PointerController.hpp>
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
@@ -75,6 +77,24 @@ typedef void (*origElementDrawTex)(void*, WP<CTexPassElement>, const CRegion&);
 static bool g_unloading = false;
 static wl_event_source* g_backgroundOpenIdle = nullptr;
 bool                    canvasNativeBackgroundAtCursor();
+
+// Defer workspace dispatch until the axis event has finished. Weak references
+// prevent a queued scroll from acting on a removed monitor or stale workspace.
+static struct {
+    PHLMONITORREF monitor;
+    PHLWORKSPACEREF workspace;
+    int direction = 0;
+} g_desktopScroll;
+static wl_event_source* g_desktopScrollIdle = nullptr;
+static std::chrono::steady_clock::time_point g_lastDesktopScroll{};
+
+static bool desktopScrollBackground() {
+    const auto overview = scrollOverviewAt(g_pInputManager->getMouseCoordsInternal());
+    if (!overview)
+        return canvasNativeBackgroundAtCursor();
+    const auto canvas = dynamic_cast<CScrollOverview*>(overview.get());
+    return canvas && canvas->acceptsDesktopWorkspaceScroll();
+}
 
 // Do NOT change this function.
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -941,6 +961,46 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             info.cancelled = true;
     });
 
+    static auto DESKTOPSCROLL = Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
+        if (g_unloading || info.cancelled || !ScrollOverview::Config::getBackgroundWorkspaceScroll() ||
+            event.source != WL_POINTER_AXIS_SOURCE_WHEEL || event.axis != WL_POINTER_AXIS_VERTICAL_SCROLL || event.delta == 0 ||
+            g_pInputManager->getModsFromAllKBs() || g_pInputManager->hasHeldButtons() ||
+            (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()) || !desktopScrollBackground())
+            return;
+        const auto pos = g_pInputManager->getMouseCoordsInternal();
+        for (const auto& monitor : State::monitorState()->monitors()) {
+            if (!monitor->logicalBox().containsPoint(pos) || !monitor->m_activeWorkspace || monitor->m_activeSpecialWorkspace)
+                continue;
+            info.cancelled = true;
+            const auto now = std::chrono::steady_clock::now();
+            if (g_desktopScrollIdle || now - g_lastDesktopScroll < std::chrono::milliseconds(250))
+                return;
+            g_lastDesktopScroll = now;
+            g_desktopScroll = {monitor, monitor->m_activeWorkspace, event.delta > 0 ? 1 : -1};
+            g_desktopScrollIdle = wl_event_loop_add_idle(g_pCompositor->m_wlEventLoop, [](void*) {
+                g_desktopScrollIdle = nullptr;
+                const auto monitor = g_desktopScroll.monitor.lock();
+                if (g_unloading || !monitor || monitor->m_activeWorkspace != g_desktopScroll.workspace.lock() ||
+                    monitor->m_activeSpecialWorkspace || !ScrollOverview::Config::getBackgroundWorkspaceScroll() ||
+                    (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()))
+                    return;
+                // Keyboard-style dispatch may restore a workspace's remembered
+                // pointer position. A mouse gesture must keep screen coordinates.
+                const auto cursor = g_pInputManager->getMouseCoordsInternal();
+                if (!monitor->logicalBox().containsPoint(cursor))
+                    return;
+                const int warp = ScrollOverview::Config::getValue<int>("cursor:warp_on_change_workspace");
+                ScrollOverview::Config::setValue("cursor:warp_on_change_workspace", 0);
+                Desktop::focusState()->rawMonitorFocus(monitor);
+                HyprlandAPI::invokeHyprctlCommand("dispatch", std::string("hl.dsp.focus({workspace=\"r") +
+                    (g_desktopScroll.direction > 0 ? "+1" : "-1") + "\"})");
+                ScrollOverview::Config::setValue("cursor:warp_on_change_workspace", warp);
+                Pointer::pointerController()->warpTo(cursor, true);
+            }, nullptr);
+            return;
+        }
+    });
+
     static bool backgroundRightDown = false;
     static auto BACKGROUNDBUTTON    = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
         if (g_unloading || event.button != BTN_RIGHT)
@@ -1002,6 +1062,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    if (g_desktopScrollIdle)
+        wl_event_source_remove(g_desktopScrollIdle);
+    g_desktopScrollIdle = nullptr;
+    g_desktopScroll = {};
     if (g_backgroundOpenIdle)
         wl_event_source_remove(g_backgroundOpenIdle);
     g_backgroundOpenIdle = nullptr;

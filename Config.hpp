@@ -114,6 +114,7 @@ bool          getCanvasWorkspaceIsolation();
 bool          getCanvasPersistent();
 bool          getCanvasLinkedScreens();
 bool                                        getBackgroundRightClick();
+bool                                        getBackgroundWorkspaceScroll();
 bool                                        getCtrlClickFocus();
 bool                                        getButtonChordFocus();
 int                                         getButtonChordTimeout();

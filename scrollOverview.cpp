@@ -6071,6 +6071,17 @@ void CScrollOverview::updateScrollingPan() {
     }
 }
 
+bool CScrollOverview::acceptsDesktopWorkspaceScroll() {
+    const auto monitor = pMonitor.lock();
+    if (!monitor || closing || !isCanvasDesktop() || canvasNavigationActive || !ScrollOverview::Config::getCanvasWorkspaceIsolation() ||
+        dragPendingPrimary || dragActiveWindow || resizePointerDown || scrollingPanPointerDown || clientGestureButton || spacePanHeld ||
+        !canvasBackgroundLayersClear(monitor))
+        return false;
+    const auto local = (g_pInputManager->getMouseCoordsInternal() - monitor->m_position) * monitor->m_scale;
+    return !canvasArrangeButtonBox().containsPoint(local) &&
+        !windowAtOverviewPoint(getOverviewMousePosLocal(monitor)) && !canvasForwardedPointerSurface;
+}
+
 void CScrollOverview::beginBackgroundPan(bool closeOnClick) {
     if (!isCanvasDesktop() || !canvasNavigationActive || closing)
         return;

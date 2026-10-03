@@ -372,6 +372,8 @@ static void registerConfigValues() {
                                   makeShared<CIntValue>("plugin:spatialoverview:input:button_chord_timeout", "maximum milliseconds between focus-chord presses", 120, SIntValueOptions{.min = 30, .max = 300}));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:input:ctrl_click_focus", "Ctrl-primary-click frames a window or group outside the navigator", false));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+        makeShared<CBoolValue>("plugin:spatialoverview:input:background_workspace_scroll", "mouse wheel on empty desktop switches native workspace", false));
     HyprlandAPI::addConfigValueV2(
         SCROLLOVERVIEW_HANDLE,
         makeShared<CBoolValue>("plugin:spatialoverview:input:background_right_click", "open navigator with an unmodified right click on desktop background", false));
@@ -696,6 +698,9 @@ int getCanvasFocusRow() {
     return std::clamp(getValue<int>("plugin:spatialoverview:canvas:focus_row"), -1, getCanvasFocusRows() - 1);
 }
 
+bool getBackgroundWorkspaceScroll() {
+    return getValue<bool>("plugin:spatialoverview:input:background_workspace_scroll");
+}
 bool getBackgroundRightClick() {
     return getValue<bool>("plugin:spatialoverview:input:background_right_click");
 }

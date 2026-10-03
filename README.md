@@ -424,6 +424,21 @@ kept in this repository. Neither project endorses this one.
 
 BSD 3-Clause; see [LICENSE](LICENSE).
 
+### Desktop workspace wheel
+
+Opt in with `input.background_workspace_scroll = true` (default off).
+Roll the mouse wheel down on empty desktop for the next native workspace,
+or up for the previous one. Switching preserves the cursor's screen position
+and uses monitor-relative workspace ordering. A 250 ms cooldown prevents a
+fast wheel burst from skipping several workspaces.
+
+Works on the native desktop and the persistent canvas in direct-input mode
+with `canvas.workspace_isolation = true`. The navigator keeps its normal zoom
+and pan interactions. Windows, borders, panels, docks, menus and special
+workspaces do not start the gesture. Modifiers, held mouse buttons, horizontal
+scroll and touchpad scrolling retain their existing behavior. Left-dragging
+is unchanged. Removing the plugin cancels queued switches.
+
 ### Independent workspace canvases
 
 Set `canvas.workspace_isolation = true` in the plugin configuration, then close

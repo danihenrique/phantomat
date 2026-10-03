@@ -77,6 +77,7 @@ class CScrollOverview : public IOverview {
     bool         openNavigator(const std::string& query = {});
     void         landOnWindow(PHLWINDOW window);
     void         beginBackgroundPan(bool closeOnClick);
+    bool         acceptsDesktopWorkspaceScroll();
     void               focusCanvasClick(PHLWINDOW window);
     bool               frameCanvasGroup(PHLWINDOW window, bool land);
     bool               createCanvasGroup();
