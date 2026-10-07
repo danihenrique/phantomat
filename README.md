@@ -335,6 +335,7 @@ Everything can also be set in `~/.config/hypr/spatialoverview.lua` (then
 | `canvas.arrange_resize_limit` | Maximum relative resize applied to any window by smart arrangement |
 | `canvas.auto_float` | Detach existing and new app windows from tiling |
 | `canvas.auto_place` | Place newly managed windows near the active camera |
+| `canvas.placement_near_view` | Opt-in: use visible free space, then extend to the right without overlap. New launches ignore old remembered positions outside startup restoration. Default `false`; existing windows and reload restoration keep their positions. |
 | `canvas.placement_gap` | Collision gap used by automatic placement |
 | `input.pan_sensitivity` | Middle-drag camera sensitivity (and optional Space-drag sensitivity) |
 | `input.drag_threshold` | Pixels before a click becomes a drag |

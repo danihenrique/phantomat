@@ -130,6 +130,7 @@ float         getCanvasMaxZoom();
 float         getCanvasZoomStep();
 bool          getCanvasAutoFloat();
 bool          getCanvasAutoPlace();
+bool          getCanvasPlacementNearView();
 int           getCanvasPlacementGap();
 bool          getCanvasSpacePan();
 bool          getCanvasDirectInput();

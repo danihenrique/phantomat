@@ -399,6 +399,8 @@ static void registerConfigValues() {
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CBoolValue>("plugin:spatialoverview:canvas:auto_place", "place newly opened windows on the canvas grid", true));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
+                                  makeShared<CBoolValue>("plugin:spatialoverview:canvas:placement_near_view", "prefer visible free space for new windows, then grow to the right; restore old positions only during startup", false));
+    HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
                                   makeShared<CIntValue>("plugin:spatialoverview:canvas:placement_gap", "minimum gap used by automatic canvas placement", 40,
                                                         SIntValueOptions{.min = 0, .max = 512}));
     HyprlandAPI::addConfigValueV2(SCROLLOVERVIEW_HANDLE,
@@ -747,6 +749,10 @@ bool getCanvasAutoFloat() {
 
 bool getCanvasAutoPlace() {
     return getValue<bool>("plugin:spatialoverview:canvas:auto_place");
+}
+
+bool getCanvasPlacementNearView() {
+    return getValue<bool>("plugin:spatialoverview:canvas:placement_near_view");
 }
 
 int getCanvasPlacementGap() {

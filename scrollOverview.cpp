@@ -1,3 +1,4 @@
+#include "CanvasPlacement.hpp"
 #include "scrollOverview.hpp"
 #include <algorithm>
 #include <any>
@@ -4891,7 +4892,8 @@ bool CScrollOverview::manageCanvasWindow(PHLWINDOW window, bool placeNew) {
         TARGET->warpPositionSize();
         return true;
     }
-    if (placeNew && ScrollOverview::Config::getCanvasRememberLayout()) {
+    if (placeNew && ScrollOverview::Config::getCanvasRememberLayout() &&
+        (!ScrollOverview::Config::getCanvasPlacementNearView() || Time::steadyNow() < g_canvasMemoryRestoreUntil)) {
         if (const auto HOME = SpatialOverview::Memory::claim(window, Time::steadyNow() < g_canvasMemoryRestoreUntil)) {
             TARGET->rememberFloatingSize(HOME->size());
             TARGET->setPositionGlobal(*HOME);
@@ -4916,6 +4918,24 @@ bool CScrollOverview::manageCanvasWindow(PHLWINDOW window, bool placeNew) {
     const auto CENTERPX    = CBox{{}, MONITOR->m_size * MONITOR->m_scale}.middle();
     const auto WORLDCENTER = overviewPointToGlobal(0, CENTERPX);
     const float GAP        = sc<float>(ScrollOverview::Config::getCanvasPlacementGap());
+    if (ScrollOverview::Config::getCanvasPlacementNearView()) {
+        const auto TOPLEFT = overviewPointToGlobal(0, {});
+        const auto BOTTOMRIGHT = overviewPointToGlobal(0, MONITOR->m_size * MONITOR->m_scale);
+        std::vector<CBox> boxes;
+        for (const auto& ref : Desktop::windowState()->windows()) {
+            const auto existing = getOverviewWindowToShow(ref);
+            if (!shouldShowOverviewWindow(existing) || existing == window || !existing->layoutTarget() ||
+                existing->m_pinned || isScreensaverWindow(existing)) continue;
+            boxes.push_back(existing->layoutTarget()->position());
+        }
+        const auto placement = SpatialOverview::Placement::nearView(CBox{TOPLEFT, BOTTOMRIGHT - TOPLEFT}, SIZE, boxes, GAP);
+        TARGET->rememberFloatingSize(placement.size());
+        TARGET->setPositionGlobal(placement);
+        TARGET->warpPositionSize();
+        TARGET->damageEntire();
+        return true;
+    }
+
     const float STEPX      = SIZE.x + GAP;
     const float STEPY      = SIZE.y + GAP;
     CBox       PLACEMENT{WORLDCENTER - SIZE / 2.F, SIZE};
