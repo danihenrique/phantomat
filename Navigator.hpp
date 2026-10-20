@@ -36,7 +36,18 @@ namespace SpatialOverview::Navigator {
         std::vector<size_t> classMatches; // codepoint indices into displayClass()
     };
 
+    struct SWorkspaceCard {
+        PHLWORKSPACEREF workspace;
+        int64_t id = 0;
+        std::string name, apps;
+        int windows = 0;
+        bool current = false;
+    };
+
     struct SState {
+        bool mission = false;
+        int missionSelected = 0;
+        std::vector<SWorkspaceCard> workspaces;
         bool                 open         = false;
         std::string          query;
         bool                 listRevealed = false;

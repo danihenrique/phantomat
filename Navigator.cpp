@@ -326,6 +326,8 @@ namespace SpatialOverview::Navigator {
             return;
         stopRepeat();
         g_state.open = false;
+        g_state.mission = false;
+        g_state.workspaces.clear();
         g_state.query.clear();
         g_state.results.clear();
         g_state.helpOpen     = false;

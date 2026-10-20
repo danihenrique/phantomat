@@ -492,6 +492,15 @@ bool canvasTogglePin(PHLWINDOW window);
 
 static SDispatchResult onOverviewDispatcher(std::string arg) {
     const auto [ACTION, TARGET] = splitOverviewArg(arg);
+    if (SpatialOverview::Navigator::state().mission && ACTION == "toggle") {
+        for (const auto& overview : scrollOverviews()) {
+            if (auto* canvas = dynamic_cast<CScrollOverview*>(overview.get())) {
+                canvas->finishMissionControl();
+                break;
+            }
+        }
+        return {};
+    }
 
     if (ACTION == "select") {
         const auto OVERVIEW = scrollOverviewAt(g_pInputManager->getMouseCoordsInternal());
@@ -562,18 +571,23 @@ static SDispatchResult onOverviewDispatcher(std::string arg) {
 
 // Poll screen coordinates: the persistent canvas may consume pointer events.
 static void canvasHotCornerMotion() {
-    static bool hotCornerInside = false;
+    static int hotCornerInside = 0;
+    static PHLMONITORREF hotCornerMonitor;
+    int cornerKind = 0;
     const auto pos = g_pInputManager->getMouseCoordsInternal();
     PHLMONITOR corner;
     for (const auto& monitor : State::monitorState()->monitors()) {
         const auto local = pos - monitor->m_position;
-        if (local.x >= 0 && local.x < 3 && local.y >= 0 && local.y < 3) {
-            corner = monitor;
-            break;
+        if (local.x >= 0 && local.x < 3) {
+            if (local.y >= 0 && local.y < 3) cornerKind = 1;
+            else if (ScrollOverview::Config::getMissionControlCorner() && ScrollOverview::Config::getCanvasWorkspaceIsolation() &&
+                     local.y >= monitor->m_size.y - 3 && local.y < monitor->m_size.y) cornerKind = 2;
+            if (cornerKind) { corner = monitor; break; }
         }
     }
-    const bool entered = corner && !hotCornerInside;
-    hotCornerInside = !!corner;
+    const bool entered = corner && (cornerKind != hotCornerInside || corner != hotCornerMonitor.lock());
+    hotCornerInside = cornerKind;
+    hotCornerMonitor = corner;
     if (!entered || g_unloading || g_hotCornerIdle ||
         !ScrollOverview::Config::getCanvasDesktopMode() || (!g_hotCornerButtons.empty() || g_pInputManager->hasHeldButtons()) ||
         g_pInputManager->getModsFromAllKBs() || corner->m_activeSpecialWorkspace ||
@@ -588,12 +602,23 @@ static void canvasHotCornerMotion() {
         const auto pos = g_pInputManager->getMouseCoordsInternal();
         for (const auto& monitor : State::monitorState()->monitors()) {
             const auto local = pos - monitor->m_position;
-            if (local.x < 0 || local.x >= 3 || local.y < 0 || local.y >= 3 || monitor->m_activeSpecialWorkspace)
+            const bool top = local.y >= 0 && local.y < 3;
+            const bool bottom = ScrollOverview::Config::getMissionControlCorner() && ScrollOverview::Config::getCanvasWorkspaceIsolation() &&
+                                local.y >= monitor->m_size.y - 3 && local.y < monitor->m_size.y;
+            if (local.x < 0 || local.x >= 3 || (!top && !bottom) || monitor->m_activeSpecialWorkspace)
                 continue;
             if (!scrollOverviewForMonitor(monitor) && !openOverview(monitor))
                 return;
             if (auto* canvas = dynamic_cast<CScrollOverview*>(scrollOverviewForMonitor(monitor).get());
                 canvas && !canvas->isClosing()) {
+                if (bottom) {
+                    canvas->toggleMissionControl();
+                    return;
+                }
+                if (SpatialOverview::Navigator::state().mission) {
+                    canvas->finishMissionControl();
+                    return;
+                }
                 if (canvas->isCanvasNavigationActive()) {
                     // openNavigator enters every screen; leave every screen too.
                     for (const auto& overview : scrollOverviews()) {
@@ -720,7 +745,7 @@ static SDispatchResult onCanvasDispatcher(std::string arg) {
     if (!CANVAS)
         return arg == "refresh" ? SDispatchResult{} : SDispatchResult{.success = false, .error = "Open the canvas before using this action"};
     if (arg == "select" || arg == "clear-selection" || arg == "group" || arg == "ungroup" || arg == "frame-group" || arg == "back" || arg == "land" || arg == "frame" ||
-        arg == "undo" || arg == "redo" || arg == "fit" || arg == "summon" || arg == "search" || arg == "tune" || arg.starts_with("search ") || arg.starts_with("zoom ") ||
+        arg == "mission" || arg == "undo" || arg == "redo" || arg == "fit" || arg == "summon" || arg == "search" || arg == "tune" || arg.starts_with("search ") || arg.starts_with("zoom ") ||
         arg.starts_with("pan ") || arg.starts_with("nudge ") || arg.starts_with("area ") || arg.starts_with("go ") || arg.starts_with("send "))
         return CANVAS->flightDeckAction(arg) ? SDispatchResult{} : SDispatchResult{.success = false, .error = "No matching window, area or undo state"};
 
@@ -1131,6 +1156,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    if (SpatialOverview::Navigator::state().mission) {
+        for (const auto& overview : scrollOverviews()) {
+            if (auto* canvas = dynamic_cast<CScrollOverview*>(overview.get())) {
+                canvas->finishMissionControl();
+                break;
+            }
+        }
+    }
     if (g_hotCornerTimer)
         wl_event_source_remove(g_hotCornerTimer);
     g_hotCornerTimer = nullptr;

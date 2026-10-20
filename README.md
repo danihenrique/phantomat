@@ -482,3 +482,34 @@ session lock and special workspaces suppress activation. Right-click remains
 available. The timer and pending callback are cancelled when the plugin unloads.
 
 Regression: `python3 tests/hot-corner-nested.py .build/dev/spatialoverview.so`.
+
+
+### Workspace footer and Mission Control (personal fork)
+
+With `canvas.workspace_isolation = true`, compact workspace cards stay in the
+canvas footer beside the minimap. Click a card to switch the native workspace
+while staying in canvas mode. Cards include names and window counts, wrap to
+additional rows as needed, and include existing empty persistent workspaces.
+
+Enable `input.mission_control_corner = true` to open Mission Control by entering
+the bottom-left 3×3 logical pixels of any monitor. It is disabled by default.
+The top-left corner retains its existing canvas toggle. Dragging, held modifiers,
+a special workspace, or a locked session suppress corner activation.
+
+Mission Control displays live windows from every ordinary workspace together on
+the initiating monitor. A temporary non-overlapping grid chooses the largest
+common scale that fits every window: two windows appear larger than fifteen.
+This only changes rendering; original window geometry and ownership are preserved.
+Hidden group tabs and special workspaces are excluded. Click a window or use
+arrows, Tab/Shift+Tab, scrolling and Enter to open its workspace in normal desktop mode focused on
+that window. Escape or leaving and reentering the bottom-left corner cancels and
+restores every monitor's camera and previous navigation mode.
+
+Script/shortcut: `hl.plugin.spatialoverview.canvas("mission")` toggles the overview
+once a persistent canvas exists; it requires workspace isolation and the
+navigator, but not the corner option. Creating, removing or moving a window or
+workspace, external workspace switching and canvas shutdown dismiss the overview
+so it cannot retain stale window references.
+
+Regressions: `python3 tests/mission-control-nested.py .build/mission/spatialoverview.so`
+and `python3 tests/mission-control-monitors-nested.py .build/mission/spatialoverview.so`.

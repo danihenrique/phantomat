@@ -119,6 +119,26 @@ struct SCanvasHistory {
 static std::unordered_map<WORKSPACEID, SCanvasHistory> g_workspaceHistory;
 static bool g_canvasRestoring = false;
 static std::unordered_map<std::string, Vector2D> g_canvasCameraBookmarks;
+struct SMissionCamera {
+    PHLMONITORREF monitor;
+    PHLWORKSPACEREF workspace;
+    SpatialOverview::Memory::SCamera camera;
+    bool hasReturn = false;
+    bool hasLanding = false;
+    CBox landing;
+};
+struct SMissionWindow {
+    PHLWINDOWREF window;
+    CBox box;
+    float zoom = 1.F;
+};
+static std::vector<SMissionWindow> g_missionWindows;
+static int g_missionColumns = 1;
+
+static PHLMONITORREF g_missionMonitor;
+static std::vector<SMissionCamera> g_missionCameras;
+static SpatialOverview::Navigator::SState g_missionNavigator;
+
 static std::unordered_map<std::string, SpatialOverview::Memory::SCamera> g_workspaceCameras;
 static std::string canvasCameraKey(const PHLMONITOR& monitor, const PHLWORKSPACE& workspace) {
     if (!monitor) return {};
@@ -1455,6 +1475,8 @@ static void moveOverviewTargetNextToWindow(const SP<Layout::ITarget>& target, co
 }
 
 CScrollOverview::~CScrollOverview() {
+    if (SpatialOverview::Navigator::state().mission)
+        finishMissionControl();
     if (focusChordTimer)
         wl_event_source_remove(focusChordTimer);
     focusChordTimer = nullptr;
@@ -1891,6 +1913,43 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
 
             const auto MONITOR = pMonitor.lock();
             const auto RAWLOCAL = MONITOR ? (g_pInputManager->getMouseCoordsInternal() - MONITOR->m_position) * MONITOR->m_scale : lastMousePosLocal;
+            if (SpatialOverview::Navigator::state().mission) {
+                info.cancelled = true;
+                if (event.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                    navigatorSwallowedButtons.emplace(event.button);
+                    int hit = -1;
+                    if (MONITOR == g_missionMonitor.lock())
+                        for (size_t i = 0; i < g_missionWindows.size(); ++i)
+                            if (g_missionWindows[i].box.containsPoint(lastMousePosLocal)) hit = i;
+                    if (event.button == MAIN && hit >= 0) {
+                        SpatialOverview::Navigator::state().missionSelected = hit;
+                        finishMissionControl(true);
+                    }
+                }
+                requestInputFrame();
+                return;
+            }
+            if (isCanvasNavigationActive() && showsNavigatorHud() && event.button == MAIN && event.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                const SpatialOverview::Hud::SPaletteView view{.monitorSize = MONITOR->m_size, .scale = MONITOR->m_scale};
+                for (const auto& button : SpatialOverview::Hud::workspaceButtons(view)) {
+                    if (!button.box.containsPoint(RAWLOCAL)) continue;
+                    const auto target = button.workspace.lock();
+                    if (!target) break;
+                    info.cancelled = true;
+                    navigatorSwallowedButtons.emplace(event.button);
+                    const auto dispatcher = g_pKeybindManager->m_dispatchers.find("workspace");
+                    if (dispatcher != g_pKeybindManager->m_dispatchers.end()) {
+                        dispatcher->second(target->m_id < 0 ? "name:" + target->m_name : std::to_string(target->m_id));
+                        for (const auto& overview : scrollOverviews()) {
+                            auto* canvas = canvasOf(overview);
+                            if (canvas && !canvas->isClosing()) canvas->syncCanvasWorkspace();
+                        }
+                        if (auto* canvas = dynamic_cast<CScrollOverview*>(scrollOverviewForMonitor(target->m_monitor.lock()).get())) canvas->openNavigator();
+                    }
+                    requestInputFrame();
+                    return;
+                }
+            }
             const auto ARRANGEBUTTON = canvasArrangeButtonBox();
             // The minimap chrome is composed after the barrel lens, so its hit
             // target must use raw screen coordinates rather than the inverse-
@@ -2295,6 +2354,13 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
         if (info.cancelled || closing || sessionLocked() || scrollOverviewAt(g_pInputManager->getMouseCoordsInternal()).get() != this)
             return;
 
+        if (SpatialOverview::Navigator::state().mission) {
+            info.cancelled = true;
+            if (e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL && e.delta != 0)
+                moveMissionSelection(e.delta > 0 ? 1 : -1);
+            return;
+        }
+
         // Layer-shell menus use native coordinates, just like their buttons
         // and pointer motion. Do not steal their wheel events for the canvas.
         if (isPointerOnTopLayer(pMonitor.lock()))
@@ -2367,6 +2433,8 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
     };
 
     auto onWindowOpen = [this](PHLWINDOW window) {
+        if (SpatialOverview::Navigator::state().mission)
+            finishMissionControl();
         if (closing)
             return;
 
@@ -2386,6 +2454,8 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
     };
 
     auto onWindowClose = [this](PHLWINDOW window) {
+        if (SpatialOverview::Navigator::state().mission)
+            finishMissionControl();
         if (closing)
             return;
 
@@ -2402,6 +2472,8 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
     };
 
     auto onWindowMove = [this](PHLWINDOW window, PHLWORKSPACE workspace) {
+        if (SpatialOverview::Navigator::state().mission)
+            finishMissionControl();
         if (ScrollOverview::Config::getCanvasWorkspaceIsolation() && window && g_canvasNativeLayout.contains(window->m_stableID))
             g_canvasNativeLayout.at(window->m_stableID).workspace = workspace;
         if (closing)
@@ -2475,6 +2547,8 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_, PHLMONITO
     };
 
     auto onWorkspaceLifecycle = [this](auto) {
+        if (SpatialOverview::Navigator::state().mission)
+            finishMissionControl();
         if (closing)
             return;
 
@@ -3677,6 +3751,10 @@ bool CScrollOverview::isCanvasNavigationActive() const {
 }
 
 void CScrollOverview::toggleCanvasNavigation() {
+    if (SpatialOverview::Navigator::state().mission) {
+        finishMissionControl();
+        return;
+    }
     syncAnimationConfig();
     const auto MONITOR = pMonitor.lock();
     if (!isPersistentCanvas() || !MONITOR || closing)
@@ -4454,7 +4532,18 @@ std::string canvasStateJson() {
         groups += (groups.empty() ? "" : ", ") + titles(group);
     const auto* LEADER   = g_linkedLeader;
     const auto  SELECTED = SpatialOverview::Navigator::isOpen() ? SpatialOverview::Navigator::selectedWindow() : PHLWINDOW{};
-    return std::format("{{\"memory_version\": 2, \"linked\": {}, \"leader\": {}, \"screens\": [{}], \"fullscreen\": [{}], \"filled\": [{}], \"selected\": {}, \"selection\": {}, \"groups\": [{}]}}\n",
+    const auto& mission = SpatialOverview::Navigator::state();
+    std::string windows;
+    for (const auto& entry : g_missionWindows) {
+        const auto w = entry.window.lock();
+        if (w) windows += std::format("{}{{\"title\":{},\"workspace\":{},\"x\":{},\"y\":{},\"width\":{},\"height\":{},\"zoom\":{}}}",
+            windows.empty() ? "" : ",", jsonString(w->m_title), w->m_workspace->m_id, entry.box.x, entry.box.y, entry.box.width, entry.box.height, entry.zoom);
+    }
+    std::string cards;
+    if (mission.mission) for (const auto& card : mission.workspaces)
+        cards += std::format("{}{{\"id\":{},\"name\":{},\"windows\":{}}}", cards.empty() ? "" : ",", card.id, jsonString(card.name), card.windows);
+    return std::format("{{\"mission\": {{\"open\":{},\"selected\":{},\"workspaces\":[{}],\"windows\":[{}]}}, \"memory_version\": 2, \"linked\": {}, \"leader\": {}, \"screens\": [{}], \"fullscreen\": [{}], \"filled\": [{}], \"selected\": {}, \"selection\": {}, \"groups\": [{}]}}\n",
+                       mission.mission ? "true" : "false", mission.missionSelected, cards, windows,
                        ScrollOverview::Config::getCanvasLinkedScreens() ? "true" : "false", jsonString(LEADER && LEADER->canvasMonitor() ? LEADER->canvasMonitor()->m_name : ""),
                        screens, fullscreen, canvasFillJson(), jsonString(SELECTED ? SELECTED->m_title : ""), titles(SpatialOverview::CanvasGroups::selection), groups);
 }
@@ -8203,6 +8292,32 @@ void CScrollOverview::renderCanvasDesktopScene(PHLMONITOR monitor, float renderS
     if (!isCanvasDesktop() || !monitor)
         return;
 
+    if (SpatialOverview::Navigator::state().mission && monitor == g_missionMonitor.lock()) {
+        for (size_t i = 0; i < g_missionWindows.size(); ++i) {
+            const auto& entry = g_missionWindows[i];
+            const auto window = entry.window.lock();
+            if (!Desktop::View::validMapped(window)) continue;
+            const auto workspace = window->m_workspace;
+            const bool visible = workspace->m_visible, forced = workspace->m_forceRendering;
+            workspace->m_visible = true; workspace->m_forceRendering = true;
+            auto restore = Hyprutils::Utils::CScopeGuard([workspace, visible, forced] {
+                workspace->m_visible = visible; workspace->m_forceRendering = forced;
+            });
+            renderWindowLive(monitor, window, entry.box, entry.zoom, now);
+            if (static_cast<int>(i) == SpatialOverview::Navigator::state().missionSelected) {
+                CBorderPassElement::SBorderData border;
+                border.box = entry.box.copy().expand(4 * monitor->m_scale);
+                border.grad1 = Config::CGradientValueData{SpatialOverview::Hud::theme().accent};
+                border.a = 1.F;
+                border.borderSize = 2 * monitor->m_scale;
+                border.round = 8 * monitor->m_scale;
+                border.outerRound = border.round;
+                g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(border));
+            }
+        }
+        return;
+    }
+
     std::unordered_set<const void*> rendered;
     const auto renderPass = [&](bool floating) {
         for (const auto& windowRef : Desktop::windowState()->windows()) {
@@ -8425,7 +8540,7 @@ void CScrollOverview::renderWindowLive(PHLMONITOR monitor, PHLWINDOW window, con
         .workspaceBox         = workspaceBox,
         .selected             = closeOnWindow == window,
         .dragged              = dragged,
-        .cameraTransform      = isCanvasDesktop() && !dragged,
+        .cameraTransform      = isCanvasDesktop() && !dragged && !SpatialOverview::Navigator::state().mission,
         .pseudoFocusWindow    = PSEUDOFOCUSWINDOW,
     });
 }
@@ -8722,6 +8837,19 @@ void CScrollOverview::sendOverviewFrameCallbacks(const Time::steady_tp& now) {
     const auto MONITOR = pMonitor.lock();
     if (!MONITOR)
         return;
+
+    if (SpatialOverview::Navigator::state().mission && MONITOR == g_missionMonitor.lock()) {
+        const bool previous = sendingOverviewFrameCallbacks;
+        sendingOverviewFrameCallbacks = true;
+        for (const auto& entry : g_missionWindows) {
+            const auto window = entry.window.lock();
+            if (!Desktop::View::validMapped(window)) continue;
+            surfaceTreePresent(window->wlSurface() ? window->wlSurface()->resource() : nullptr, MONITOR, now);
+            popupTreePresent(window, MONITOR, now);
+        }
+        sendingOverviewFrameCallbacks = previous;
+        return;
+    }
 
     const auto ACTIVEIDX = activeWorkspaceIndex();
     const auto SCALE     = scale->value();
@@ -9068,6 +9196,8 @@ bool CScrollOverview::shouldHandleSurfaceDamage(SP<CWLSurfaceResource> surface) 
 }
 
 void CScrollOverview::close() {
+    if (SpatialOverview::Navigator::state().mission)
+        finishMissionControl();
     if (closeApplied)
         return;
 
@@ -9393,6 +9523,8 @@ bool CScrollOverview::syncCanvasWorkspace() {
         !MONITOR->m_activeWorkspace || MONITOR->m_activeWorkspace == startedOn || closing)
         return false;
 
+    if (SpatialOverview::Navigator::state().mission)
+        finishMissionControl();
     g_workspaceCameras[canvasCameraKey(MONITOR, startedOn)] = memoryCamera();
     startedOn = MONITOR->m_activeWorkspace;
     // Previously hidden windows may not yet have been floated/restored since load.
@@ -9645,10 +9777,10 @@ void CScrollOverview::render() {
         renderCanvasGrid(MONITOR, ACTIVEIDX, PITCH, SCALE);
         OverviewRender::flushPass(MONITOR);
         renderCanvasDesktopScene(MONITOR, SCALE, NOW);
-        renderNavigatorReticle(MONITOR, NOW);
+        if (!SpatialOverview::Navigator::state().mission) renderNavigatorReticle(MONITOR, NOW);
         renderDraggedWindow(MONITOR, ACTIVEIDX, PITCH, SCALE, NOW);
         renderExperimentChrome(MONITOR);
-        renderCanvasViewport(MONITOR, SCALE);
+        if (!SpatialOverview::Navigator::state().mission) renderCanvasViewport(MONITOR, SCALE);
         renderCanvasMinimap(MONITOR);
         renderChromeLayers(MONITOR, NOW);
         renderNavigatorHud(MONITOR);
@@ -10059,6 +10191,10 @@ static int saveCanvasMemory(void*) {
 }
 
 SpatialOverview::Memory::SCamera CScrollOverview::memoryCamera() const {
+    if (SpatialOverview::Navigator::state().mission)
+        for (const auto& saved : g_missionCameras)
+            if (saved.monitor.lock() == pMonitor.lock() && saved.workspace.lock() == startedOn)
+                return saved.camera;
     return {.offset = viewOffset->goal(), .zoom = scale->goal(), .navigating = canvasNavigationActive,
             .returnOffset = hasNavigationReturn ? navigationReturnOffset : viewOffset->goal(),
             .returnZoom = hasNavigationReturn ? navigationReturnZoom : scale->goal()};
@@ -10152,7 +10288,8 @@ void CScrollOverview::revertNavigation() {
 
 bool CScrollOverview::showsNavigatorHud() const {
     return isCanvasNavigationActive() && !closing && SpatialOverview::Navigator::isOpen() && ScrollOverview::Config::getNavigatorEnabled() &&
-        activeScrollOverview().get() == static_cast<const IOverview*>(this);
+        (SpatialOverview::Navigator::state().mission ? g_missionMonitor.lock() == pMonitor.lock() :
+         activeScrollOverview().get() == static_cast<const IOverview*>(this));
 }
 
 bool CScrollOverview::navigatorOwnsPointer() const {
@@ -10202,6 +10339,138 @@ void CScrollOverview::followNavigatorSelection() {
     if (const auto WINDOW = SpatialOverview::Navigator::selectedWindow())
         followCanvasWindow(WINDOW, true, true);
     damage();
+}
+
+bool CScrollOverview::toggleMissionControl() {
+    namespace Navigator = SpatialOverview::Navigator;
+    if (Navigator::state().mission) {
+        finishMissionControl();
+        return true;
+    }
+    const auto monitor = pMonitor.lock();
+    if (!monitor || sessionLocked() || !isPersistentCanvas() || closing || !ScrollOverview::Config::getCanvasWorkspaceIsolation() ||
+        !ScrollOverview::Config::getNavigatorEnabled() || monitor->m_activeSpecialWorkspace)
+        return false;
+    g_missionCameras.clear();
+    g_missionMonitor = monitor;
+    g_missionNavigator = Navigator::state();
+    Navigator::stopRepeat();
+    for (const auto& overview : scrollOverviews()) {
+        auto* canvas = canvasOf(overview);
+        if (canvas && !canvas->isClosing())
+            g_missionCameras.push_back({canvas->pMonitor, canvas->startedOn, canvas->memoryCamera(), canvas->hasNavigationReturn,
+                                        canvas->hasLandingDestination, canvas->landingDestinationWorld});
+    }
+    if (!openNavigator()) {
+        g_missionCameras.clear();
+        return false;
+    }
+    auto& state = Navigator::state();
+    state.mission = true;
+    state.workspaces.clear();
+    state.missionSelected = 0;
+    g_missionWindows.clear();
+    double maxWidth = 1, maxHeight = 1;
+    for (const auto& window : Desktop::windowState()->windows()) {
+        if (!Desktop::View::validMapped(window) || window->isHidden() || !window->m_workspace || window->m_workspace->m_isSpecialWorkspace)
+            continue;
+        g_missionWindows.push_back({window});
+        const auto size = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT).size();
+        maxWidth = std::max(maxWidth, size.x);
+        maxHeight = std::max(maxHeight, size.y);
+    }
+    std::ranges::stable_sort(g_missionWindows, {}, [](const auto& entry) { return entry.window.lock()->m_workspace->m_id; });
+    // Choose the grid yielding the largest common scale. Geometry and workspace
+    // ownership are untouched: these boxes are used only for rendering/hit tests.
+    const int count = g_missionWindows.size();
+    const double gap = 24, availableW = monitor->m_size.x - 96, availableH = monitor->m_size.y - 180;
+    double zoom = 0;
+    for (int cols = 1; cols <= std::max(1, count); ++cols) {
+        const int rows = (count + cols - 1) / cols;
+        const double candidate = std::min((availableW - gap * (cols - 1)) / (cols * maxWidth),
+                                          (availableH - gap * std::max(0, rows - 1)) / (std::max(1, rows) * maxHeight));
+        if (candidate > zoom) { zoom = candidate; g_missionColumns = cols; }
+    }
+    zoom = std::max(.001, zoom);
+    const int rows = (count + g_missionColumns - 1) / g_missionColumns;
+    const double cellW = maxWidth * zoom, cellH = maxHeight * zoom;
+    const double top = 100 + (availableH - rows * cellH - std::max(0, rows - 1) * gap) / 2;
+    for (int i = 0; i < count; ++i) {
+        auto& entry = g_missionWindows[i];
+        const auto window = entry.window.lock();
+        const auto size = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT).size() * zoom;
+        const int columnsInRow = std::min(g_missionColumns, count - (i / g_missionColumns) * g_missionColumns);
+        const double left = (monitor->m_size.x - columnsInRow * cellW - (columnsInRow - 1) * gap) / 2;
+        entry.box = CBox{left + (i % g_missionColumns) * (cellW + gap) + (cellW - size.x) / 2,
+                         top + (i / g_missionColumns) * (cellH + gap) + (cellH - size.y) / 2, size.x, size.y}.scale(monitor->m_scale);
+        entry.zoom = zoom;
+        if (window == Desktop::focusState()->window()) state.missionSelected = i;
+    }
+    Navigator::touch();
+    redrawAll();
+    return true;
+}
+
+void CScrollOverview::moveMissionSelection(int delta) {
+    auto& state = SpatialOverview::Navigator::state();
+    if (!state.mission || g_missionWindows.empty()) return;
+    state.missionSelected = std::clamp(state.missionSelected + delta, 0, static_cast<int>(g_missionWindows.size()) - 1);
+    SpatialOverview::Navigator::touch();
+    redrawAll();
+}
+
+void CScrollOverview::finishMissionControl(bool activate) {
+    namespace Navigator = SpatialOverview::Navigator;
+    auto& state = Navigator::state();
+    if (!state.mission) return;
+    PHLWINDOW selected;
+    if (activate && state.missionSelected >= 0 && state.missionSelected < static_cast<int>(g_missionWindows.size()))
+        selected = g_missionWindows[state.missionSelected].window.lock();
+    const PHLWORKSPACE target = selected ? selected->m_workspace : PHLWORKSPACE{};
+    g_missionWindows.clear();
+    state.mission = false;
+    Navigator::stopRepeat();
+    // Restore before switching: browsing must not overwrite a workspace camera.
+    for (const auto& saved : g_missionCameras) {
+        auto* canvas = dynamic_cast<CScrollOverview*>(scrollOverviewForMonitor(saved.monitor.lock()).get());
+        if (!canvas || canvas->isClosing() || canvas->startedOn != saved.workspace.lock()) continue;
+        canvas->viewOffset->setValueAndWarp(saved.camera.offset);
+        canvas->scale->setValueAndWarp(saved.camera.zoom);
+        canvas->canvasNavigationActive = saved.camera.navigating;
+        canvas->hasNavigationReturn = saved.hasReturn;
+        canvas->hasLandingDestination = saved.hasLanding;
+        canvas->landingDestinationWorld = saved.landing;
+        canvas->navigationReturnOffset = saved.camera.returnOffset;
+        canvas->navigationReturnZoom = saved.camera.returnZoom;
+        canvas->transitionProgress->setValueAndWarp(saved.camera.navigating ? 1.F : 0.F);
+        canvas->leaveNavigatorPointer();
+        canvas->damage();
+    }
+    g_missionCameras.clear();
+    if (g_missionNavigator.open) {
+        state = std::move(g_missionNavigator);
+        Navigator::touch();
+    } else
+        Navigator::end();
+    g_missionNavigator = {};
+    g_missionMonitor.reset();
+    if (target && !target->m_isSpecialWorkspace && !target->inert()) {
+        const auto dispatcher = g_pKeybindManager->m_dispatchers.find("workspace");
+        if (dispatcher != g_pKeybindManager->m_dispatchers.end()) {
+            dispatcher->second(target->m_id < 0 ? "name:" + target->m_name : std::to_string(target->m_id));
+            for (const auto& overview : scrollOverviews()) {
+                auto* canvas = canvasOf(overview);
+                if (canvas && !canvas->isClosing()) canvas->syncCanvasWorkspace();
+            }
+            auto* canvas = dynamic_cast<CScrollOverview*>(scrollOverviewForMonitor(target->m_monitor.lock()).get());
+            if (canvas && Desktop::View::validMapped(selected)) {
+                Desktop::focusState()->fullWindowFocus(selected, Desktop::FOCUS_REASON_KEYBIND);
+                canvas->landOnWindow(selected, false);
+            }
+        }
+    }
+    redrawAll();
+    ensureCanvasKeyboardFocus();
 }
 
 bool CScrollOverview::openNavigator(const std::string& query) {
@@ -10400,7 +10669,7 @@ void CScrollOverview::focusCanvasClick(PHLWINDOW window) {
     damage();
 }
 
-void CScrollOverview::landOnWindow(PHLWINDOW window) {
+void CScrollOverview::landOnWindow(PHLWINDOW window, bool allowGroup) {
     syncAnimationConfig();
     const auto MONITOR = pMonitor.lock();
     window             = getOverviewWindowToShow(window);
@@ -10413,7 +10682,7 @@ void CScrollOverview::landOnWindow(PHLWINDOW window) {
         return;
     }
 
-    if (ScrollOverview::Config::getCanvasGroups() && SpatialOverview::CanvasGroups::bounds(window)) {
+    if (allowGroup && ScrollOverview::Config::getCanvasGroups() && SpatialOverview::CanvasGroups::bounds(window)) {
         focusCanvasClick(window);
         frameCanvasGroup(window, true);
         return;
@@ -10745,6 +11014,19 @@ bool CScrollOverview::navigatorKeyAction(uint32_t keysym, uint32_t mods, const s
         return false;
 
     auto&      STATE = Navigator::state();
+    if (STATE.mission) {
+        switch (keysym) {
+            case XKB_KEY_Escape: finishMissionControl(); break;
+            case XKB_KEY_Return: case XKB_KEY_KP_Enter: finishMissionControl(true); break;
+            case XKB_KEY_Left: case XKB_KEY_KP_Left: moveMissionSelection(-1); break;
+            case XKB_KEY_Right: case XKB_KEY_KP_Right: moveMissionSelection(1); break;
+            case XKB_KEY_Up: case XKB_KEY_KP_Up: moveMissionSelection(-g_missionColumns); break;
+            case XKB_KEY_Down: case XKB_KEY_KP_Down: moveMissionSelection(g_missionColumns); break;
+            case XKB_KEY_Tab: moveMissionSelection(mods & HL_MODIFIER_SHIFT ? -1 : 1); break;
+            default: break;
+        }
+        return true;
+    }
     const bool CTRL  = mods & HL_MODIFIER_CTRL;
     const bool SHIFT = mods & HL_MODIFIER_SHIFT;
     const bool ALT   = mods & HL_MODIFIER_ALT;
@@ -11271,8 +11553,17 @@ void CScrollOverview::updateNavigatorHover() {
 
     const auto MONITOR = pMonitor.lock();
     const auto RAW     = MONITOR ? (g_pInputManager->getMouseCoordsInternal() - MONITOR->m_position) * MONITOR->m_scale : Vector2D{};
-    const bool OVERHUD = showsNavigatorHud() && SpatialOverview::Hud::paletteHit(RAW) != SpatialOverview::Hud::PALETTE_MISS;
-    const auto WINDOW  = OVERHUD ? PHLWINDOW{} : canvasDesktopWindowAtPoint(lastMousePosLocal);
+    bool overWorkspace = false;
+    if (MONITOR && showsNavigatorHud() && !SpatialOverview::Navigator::state().mission) {
+        const SpatialOverview::Hud::SPaletteView view{.monitorSize = MONITOR->m_size, .scale = MONITOR->m_scale};
+        for (const auto& button : SpatialOverview::Hud::workspaceButtons(view))
+            overWorkspace |= button.box.containsPoint(RAW);
+    }
+    bool overMissionWindow = false;
+    if (SpatialOverview::Navigator::state().mission && MONITOR == g_missionMonitor.lock())
+        for (const auto& entry : g_missionWindows) overMissionWindow |= entry.box.containsPoint(lastMousePosLocal);
+    const bool OVERHUD = overWorkspace || (showsNavigatorHud() && SpatialOverview::Hud::paletteHit(RAW) != SpatialOverview::Hud::PALETTE_MISS);
+    const auto WINDOW  = OVERHUD || SpatialOverview::Navigator::state().mission ? PHLWINDOW{} : canvasDesktopWindowAtPoint(lastMousePosLocal);
     if (WINDOW != navigatorHoverWindow.lock()) {
         navigatorHoverWindow = WINDOW;
         damage();
@@ -11280,7 +11571,7 @@ void CScrollOverview::updateNavigatorHover() {
 
     if (dragActiveWindow || scrollingPanPointerDown)
         setCanvasCursor("grabbing");
-    else if (OVERHUD && SpatialOverview::Hud::paletteHit(RAW) >= 0)
+    else if (overWorkspace || overMissionWindow || (OVERHUD && SpatialOverview::Hud::paletteHit(RAW) >= 0))
         setCanvasCursor("pointer");
     else if (WINDOW)
         setCanvasCursor("pointer");
@@ -11525,6 +11816,8 @@ bool CScrollOverview::canvasRedo() {
 }
 
 bool CScrollOverview::flightDeckAction(const std::string& action) {
+    if (SpatialOverview::Navigator::state().mission && action != "mission")
+        finishMissionControl();
     if (!isCanvasDesktop() || closing || !pMonitor) return false;
     const auto m = pMonitor.lock();
     if (action == "select" || action == "clear-selection" || action == "group" || action == "ungroup" || action == "frame-group") {
@@ -11551,6 +11844,7 @@ bool CScrollOverview::flightDeckAction(const std::string& action) {
         damage();
         return true;
     }
+    if (action == "mission") return toggleMissionControl();
     if (action == "back") {
         if (SpatialOverview::Experiments::on(ECanvasExperiment::Landing) || SpatialOverview::Experiments::on(ECanvasExperiment::AltTab)) {
             revertNavigation();

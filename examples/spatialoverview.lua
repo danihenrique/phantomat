@@ -40,6 +40,7 @@ hl.config({
       -- Input. Middle-drag pans the world; click selects; dragging into empty
       -- grid territory places a floating window without creating a workspace.
       input = {
+        mission_control_corner = false, -- bottom-left all-window overview; requires workspace_isolation
         button_chord_focus = false, -- outside overview: left+right click frames window/group
         button_chord_timeout = 120, -- maximum interval between presses, milliseconds
         ctrl_click_focus = false, -- outside overview: Ctrl-click frames window/group

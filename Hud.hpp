@@ -70,6 +70,12 @@ namespace SpatialOverview::Hud {
         std::vector<SChromeRegion> regions;
     };
     bool chrome(const SPaletteView& view, SChrome& out);
+    struct SWorkspaceButton {
+        PHLWORKSPACEREF workspace;
+        CBox box;
+    };
+    std::vector<SWorkspaceButton> workspaceButtons(const SPaletteView& view);
+
 
     // Where the selected window should sit (logical y from the monitor top)
     // so the palette, even with a full result list, never covers it.

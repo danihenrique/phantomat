@@ -20,6 +20,9 @@
 #include "Config.hpp"
 #include "Icons.hpp"
 #include "Tuning.hpp"
+#include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/Workspace.hpp>
 
 namespace SpatialOverview::Hud {
     namespace {
@@ -700,11 +703,35 @@ namespace SpatialOverview::Hud {
 
     // ---- palette -----------------------------------------------------------------
 
+    bool missionPalette(const SPaletteView& view, SP<Render::ITexture>& texture, CBox& box) {
+        const auto& t = theme();
+        const double s = view.scale * t.hudScale;
+        const double w = std::min(760.0 * s, view.monitorSize.x * view.scale - 48 * s), h = 64 * s;
+        const auto key = std::format("mission-windows|{}|{}|{}", w, s, t.signature);
+        if (g_palette.texture && g_palette.key == key) {
+            texture = g_palette.texture; box = g_palette.box; return true;
+        }
+        auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, std::ceil(w), std::ceil(h));
+        auto* cr = cairo_create(surface);
+        roundedRect(cr, 0, 0, w, h, 12 * s); setColor(cr, t.panel); cairo_fill(cr);
+        const STextStyle title{.px = 18 * s, .weight = PANGO_WEIGHT_BOLD};
+        const STextStyle detail{.px = 11 * s};
+        drawText(cr, title, "Mission Control", 20 * s, 22 * s, t.text, w - 40 * s);
+        drawText(cr, detail, ui("All workspaces · Click / Enter to select a window · Esc to return"), 20 * s, 46 * s, t.textDim, w - 40 * s);
+        cairo_destroy(cr);
+        texture = upload(surface); cairo_surface_destroy(surface);
+        box = CBox{(view.monitorSize.x * view.scale - w) / 2, 20 * s, w, h};
+        g_palette.key = key; g_palette.texture = texture; g_palette.box = box;
+        g_palette.rows.clear(); g_palette.panels.clear();
+        return texture != nullptr;
+    }
+
     bool palette(const SPaletteView& view, SP<Render::ITexture>& texture, CBox& box) {
         const auto& STATE = Navigator::state();
         if (!STATE.open || view.monitorSize.x <= 0 || view.monitorSize.y <= 0)
             return false;
 
+        if (STATE.mission) return missionPalette(view, texture, box);
         const auto& THEME = theme();
         const auto  KEY   = paletteKey(view, STATE);
         if (g_palette.texture && g_palette.key == KEY) {
@@ -931,7 +958,29 @@ namespace SpatialOverview::Hud {
 
     // ---- screen corners ------------------------------------------------------------
 
+    std::vector<SWorkspaceButton> workspaceButtons(const SPaletteView& view) {
+        std::vector<SWorkspaceButton> buttons;
+        if (!ScrollOverview::Config::getCanvasWorkspaceIsolation()) return buttons;
+        for (const auto& ws : State::workspaceState()->workspaces())
+            if (ws && !ws->m_isSpecialWorkspace && !ws->inert()) buttons.push_back({ws, {}});
+        std::ranges::sort(buttons, {}, [](const auto& b) { return b.workspace.lock()->m_id; });
+        const double s = view.scale * theme().hudScale;
+        const double reserved = ScrollOverview::Config::getCanvasMinimapEnabled() ?
+            (ScrollOverview::Config::getCanvasMinimapWidth() + ScrollOverview::Config::getCanvasMinimapMargin() + 76) * view.scale : 38 * s;
+        const double width = std::max(100 * s, view.monitorSize.x * view.scale - reserved - 38 * s);
+        const int cols = std::max(1, static_cast<int>(width / (154 * s)));
+        const int rows = (buttons.size() + cols - 1) / cols;
+        const double cardW = std::min(146 * s, width / std::min(cols, std::max(1, static_cast<int>(buttons.size()))) - 8 * s);
+        const double stripWidth = std::min(cols, static_cast<int>(buttons.size())) * (cardW + 8 * s) - 8 * s;
+        const double left = view.monitorSize.x * view.scale - reserved - stripWidth;
+        for (size_t i = 0; i < buttons.size(); ++i)
+            buttons[i].box = CBox{left + (i % cols) * (cardW + 8 * s),
+                view.monitorSize.y * view.scale - 78 * s - rows * 58 * s + (i / cols) * 58 * s, cardW, 50 * s};
+        return buttons;
+    }
+
     bool chrome(const SPaletteView& view, SChrome& out) {
+        if (Navigator::state().mission) return false;
         const auto& STATE = Navigator::state();
         if (!STATE.open || view.monitorSize.x <= 0 || view.monitorSize.y <= 0)
             return false;
@@ -984,10 +1033,15 @@ namespace SpatialOverview::Hud {
         const STextStyle STYLE{.px = THEME.cornerSize * s, .weight = PANGO_WEIGHT_MEDIUM, .spacing = 2.2 * s};
         const double     LINE = THEME.cornerSize * 1.83 * s;
 
+        const auto buttons = workspaceButtons(view);
         std::string key = std::format("{}x{}@{:.3f}|{}", view.monitorSize.x, view.monitorSize.y, view.scale, THEME.signature);
         for (const auto& block : blocks) {
             for (const auto& [markup, color] : block.lines)
                 key += "|" + markup + hex(color);
+        }
+        for (const auto& button : buttons) {
+            const auto ws = button.workspace.lock();
+            key += std::format("|{}:{}:{}:{}", ws->m_id, ws->m_name, ws->m_visible, ws->getWindowCount());
         }
         if (g_chrome.chrome.texture && g_chrome.key == key) {
             out = g_chrome.chrome;
@@ -1005,6 +1059,19 @@ namespace SpatialOverview::Hud {
             atlasW = std::max(atlasW, SIZE.x);
             atlasH += SIZE.y + 2.0;
         }
+        const double cardsY = atlasH;
+        CBox cardsBox;
+        for (const auto& button : buttons) {
+            if (cardsBox.empty()) cardsBox = button.box;
+            else {
+                const double right = std::max(cardsBox.x + cardsBox.width, button.box.x + button.box.width);
+                const double bottom = std::max(cardsBox.y + cardsBox.height, button.box.y + button.box.height);
+                cardsBox.x = std::min(cardsBox.x, button.box.x); cardsBox.y = std::min(cardsBox.y, button.box.y);
+                cardsBox.width = right - cardsBox.x; cardsBox.height = bottom - cardsBox.y;
+            }
+        }
+        atlasW = std::max(atlasW, cardsBox.width);
+        atlasH += cardsBox.height;
         atlasH = std::max(1.0, std::ceil(atlasH));
 
         auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, sc<int>(atlasW), sc<int>(atlasH));
@@ -1035,6 +1102,24 @@ namespace SpatialOverview::Hud {
             ay += SIZE.y + 2.0;
         }
 
+
+        for (const auto& button : buttons) {
+            const auto ws = button.workspace.lock();
+            const double w = button.box.width, h = button.box.height;
+            const double cardY = cardsY + button.box.y - cardsBox.y;
+            cairo_save(cr);
+            cairo_translate(cr, button.box.x - cardsBox.x, 0);
+            roundedRect(cr, 0, cardY, w, h, 9 * s);
+            setColor(cr, ws->m_visible ? mix(THEME.card, THEME.accent, .2F) : THEME.card); cairo_fill_preserve(cr);
+            setColor(cr, ws->m_visible ? THEME.accent : THEME.edge); cairo_set_line_width(cr, s); cairo_stroke(cr);
+            const STextStyle label{.px = 12 * s, .weight = PANGO_WEIGHT_BOLD};
+            const STextStyle detail{.px = 10 * s};
+            drawText(cr, label, caseMarkup("Workspace " + ws->m_name), 10 * s, cardY + 17 * s, THEME.text, w - 20 * s);
+            drawText(cr, detail, ui(std::format("{} windows", ws->getWindowCount())), 10 * s, cardY + 35 * s, THEME.textDim, w - 20 * s);
+            cairo_restore(cr);
+        }
+        if (!buttons.empty()) result.regions.push_back({.screen = cardsBox,
+            .uv = {0.F, sc<float>(cardsY / atlasH), sc<float>(cardsBox.width / atlasW), sc<float>(cardsBox.height / atlasH)}});
         cairo_destroy(cr);
         result.texture = upload(surface);
         cairo_surface_destroy(surface);

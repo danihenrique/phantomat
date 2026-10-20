@@ -74,8 +74,11 @@ class CScrollOverview : public IOverview {
     bool         canvasPlaceAction(const std::string& action);
     bool   tunerKeyAction(uint32_t keysym, uint32_t mods, const std::string& text);
     bool         navigatorKeyAction(uint32_t keysym, uint32_t mods, const std::string& text, bool repeat);
+    bool         toggleMissionControl();
+    void         finishMissionControl(bool activate = false);
+    void         moveMissionSelection(int delta);
     bool         openNavigator(const std::string& query = {});
-    void         landOnWindow(PHLWINDOW window);
+    void         landOnWindow(PHLWINDOW window, bool allowGroup = true);
     void         beginBackgroundPan(bool closeOnClick);
     bool         acceptsDesktopWorkspaceScroll();
     void               focusCanvasClick(PHLWINDOW window);
