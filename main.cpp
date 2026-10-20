@@ -4,6 +4,7 @@
 #include <linux/input-event-codes.h>
 #include <sstream>
 #include <chrono>
+#include <unordered_set>
 #include <hyprland/src/pointer/PointerController.hpp>
 
 #include <hyprland/src/Compositor.hpp>
@@ -76,6 +77,9 @@ typedef void (*origElementDrawTex)(void*, WP<CTexPassElement>, const CRegion&);
 
 static bool g_unloading = false;
 static wl_event_source* g_backgroundOpenIdle = nullptr;
+static wl_event_source* g_hotCornerIdle = nullptr;
+static wl_event_source* g_hotCornerTimer = nullptr;
+static std::unordered_set<uint32_t> g_hotCornerButtons;
 bool                    canvasNativeBackgroundAtCursor();
 
 // Defer workspace dispatch until the axis event has finished. Weak references
@@ -556,6 +560,55 @@ static SDispatchResult onOverviewDispatcher(std::string arg) {
     return {};
 }
 
+// Poll screen coordinates: the persistent canvas may consume pointer events.
+static void canvasHotCornerMotion() {
+    static bool hotCornerInside = false;
+    const auto pos = g_pInputManager->getMouseCoordsInternal();
+    PHLMONITOR corner;
+    for (const auto& monitor : State::monitorState()->monitors()) {
+        const auto local = pos - monitor->m_position;
+        if (local.x >= 0 && local.x < 3 && local.y >= 0 && local.y < 3) {
+            corner = monitor;
+            break;
+        }
+    }
+    const bool entered = corner && !hotCornerInside;
+    hotCornerInside = !!corner;
+    if (!entered || g_unloading || g_hotCornerIdle ||
+        !ScrollOverview::Config::getCanvasDesktopMode() || (!g_hotCornerButtons.empty() || g_pInputManager->hasHeldButtons()) ||
+        g_pInputManager->getModsFromAllKBs() || corner->m_activeSpecialWorkspace ||
+        (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()))
+        return;
+    g_hotCornerIdle = wl_event_loop_add_idle(g_pCompositor->m_wlEventLoop, [](void*) {
+        g_hotCornerIdle = nullptr;
+        if (g_unloading || !ScrollOverview::Config::getCanvasDesktopMode() || (!g_hotCornerButtons.empty() || g_pInputManager->hasHeldButtons()) ||
+            g_pInputManager->getModsFromAllKBs() ||
+            (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()))
+            return;
+        const auto pos = g_pInputManager->getMouseCoordsInternal();
+        for (const auto& monitor : State::monitorState()->monitors()) {
+            const auto local = pos - monitor->m_position;
+            if (local.x < 0 || local.x >= 3 || local.y < 0 || local.y >= 3 || monitor->m_activeSpecialWorkspace)
+                continue;
+            if (!scrollOverviewForMonitor(monitor) && !openOverview(monitor))
+                return;
+            if (auto* canvas = dynamic_cast<CScrollOverview*>(scrollOverviewForMonitor(monitor).get());
+                canvas && !canvas->isClosing()) {
+                if (canvas->isCanvasNavigationActive()) {
+                    // openNavigator enters every screen; leave every screen too.
+                    for (const auto& overview : scrollOverviews()) {
+                        auto* active = dynamic_cast<CScrollOverview*>(overview.get());
+                        if (active && !active->isClosing() && active->isCanvasNavigationActive())
+                            active->toggleCanvasNavigation();
+                    }
+                } else
+                    canvas->openNavigator();
+            }
+            return;
+        }
+    }, nullptr);
+}
+
 static SDispatchResult onNavigateDispatcher(std::string arg) {
     // Window ownership is only a surface-storage detail in the shared canvas.
     // Route arrows through the last camera the user actually interacted with,
@@ -961,6 +1014,22 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             info.cancelled = true;
     });
 
+    static auto HOTCORNERBUTTON = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event, Event::SCallbackInfo&) {
+        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED)
+            g_hotCornerButtons.insert(event.button);
+        else
+            g_hotCornerButtons.erase(event.button);
+    });
+    g_hotCornerTimer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, [](void*) -> int {
+        if (!g_unloading) {
+            canvasHotCornerMotion();
+            wl_event_source_timer_update(g_hotCornerTimer, 75);
+        }
+        return 0;
+    }, nullptr);
+    if (g_hotCornerTimer)
+        wl_event_source_timer_update(g_hotCornerTimer, 75);
+
     static auto DESKTOPSCROLL = Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
         if (g_unloading || info.cancelled || !ScrollOverview::Config::getBackgroundWorkspaceScroll() ||
             event.source != WL_POINTER_AXIS_SOURCE_WHEEL || event.axis != WL_POINTER_AXIS_VERTICAL_SCROLL || event.delta == 0 ||
@@ -1062,6 +1131,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    if (g_hotCornerTimer)
+        wl_event_source_remove(g_hotCornerTimer);
+    g_hotCornerTimer = nullptr;
+    if (g_hotCornerIdle)
+        wl_event_source_remove(g_hotCornerIdle);
+    g_hotCornerIdle = nullptr;
     if (g_desktopScrollIdle)
         wl_event_source_remove(g_desktopScrollIdle);
     g_desktopScrollIdle = nullptr;

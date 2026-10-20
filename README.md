@@ -470,3 +470,15 @@ Regression: `python3 tests/workspaces-nested.py .build/workspaces/spatialovervie
 creates an isolated compositor and checks pixels, input, ownership, native
 switching and camera restoration. `WORKSPACE_BASELINE=1` reproduces the shared
 canvas visibility failure on the old build.
+
+### Experimental hot corner (personal fork)
+
+In canvas desktop mode, entering the top-left 3×3 logical pixels of any monitor
+toggles the canvas navigator, even over a window or bar: enter
+to open it, then leave and reenter to exit. This prototype is hardcoded and checks
+pointer position every 75 ms; no click is needed. Staying inside the corner does
+not retrigger it. Held mouse buttons, modifiers,
+session lock and special workspaces suppress activation. Right-click remains
+available. The timer and pending callback are cancelled when the plugin unloads.
+
+Regression: `python3 tests/hot-corner-nested.py .build/dev/spatialoverview.so`.
